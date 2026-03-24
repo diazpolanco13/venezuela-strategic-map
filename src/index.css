@@ -1,0 +1,80 @@
+@import 'leaflet/dist/leaflet.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply bg-shadow-900 text-gray-100 font-body;
+    background-image:
+      radial-gradient(ellipse at top, rgba(168, 85, 247, 0.1) 0%, transparent 50%),
+      radial-gradient(ellipse at bottom, rgba(0, 212, 255, 0.05) 0%, transparent 50%);
+    min-height: 100vh;
+  }
+
+  ::-webkit-scrollbar { @apply w-2 h-2; }
+  ::-webkit-scrollbar-track { @apply bg-shadow-800; }
+  ::-webkit-scrollbar-thumb { @apply bg-neon-blue/30 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-neon-blue/50; }
+  ::selection { @apply bg-neon-purple/40 text-white; }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-shadow-800/60 backdrop-blur-xl border border-white/5 rounded-xl;
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.05) inset,
+      0 4px 24px rgba(0, 0, 0, 0.4);
+  }
+
+  .neon-glow-blue { box-shadow: 0 0 5px #00d4ff, 0 0 20px rgba(0, 212, 255, 0.3); }
+  .neon-glow-purple { box-shadow: 0 0 5px #a855f7, 0 0 20px rgba(168, 85, 247, 0.3); }
+  .neon-glow-green { box-shadow: 0 0 5px #00ff88, 0 0 20px rgba(0, 255, 136, 0.3); }
+  .neon-glow-red { box-shadow: 0 0 5px #ff3366, 0 0 20px rgba(255, 51, 102, 0.3); }
+
+  .text-neon-glow {
+    text-shadow: 0 0 10px currentColor, 0 0 20px currentColor, 0 0 40px currentColor;
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 bg-neon-blue/20 border border-neon-blue/50 text-neon-blue
+           rounded-lg font-mono text-sm uppercase tracking-wider
+           hover:bg-neon-blue/30 hover:border-neon-blue hover:shadow-neon-blue
+           transition-all duration-300 active:scale-95;
+  }
+
+  .btn-danger {
+    @apply px-4 py-2 bg-neon-red/20 border border-neon-red/50 text-neon-red
+           rounded-lg font-mono text-sm uppercase tracking-wider
+           hover:bg-neon-red/30 hover:border-neon-red hover:shadow-neon-red
+           transition-all duration-300 active:scale-95;
+  }
+
+  .btn-success {
+    @apply px-4 py-2 bg-neon-green/20 border border-neon-green/50 text-neon-green
+           rounded-lg font-mono text-sm uppercase tracking-wider
+           hover:bg-neon-green/30 hover:border-neon-green hover:shadow-neon-green
+           transition-all duration-300 active:scale-95;
+  }
+
+  .input-dark {
+    @apply w-full px-4 py-2.5 bg-shadow-700 border border-white/10 rounded-lg
+           text-white placeholder:text-gray-500 font-mono text-sm
+           focus:outline-none focus:border-neon-blue/50 focus:ring-1 focus:ring-neon-blue/30
+           transition-all duration-200;
+  }
+
+  .input-dark:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+}
