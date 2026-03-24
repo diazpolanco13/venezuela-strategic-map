@@ -1,11 +1,11 @@
 // Mapa Estratégico de Venezuela
 // Leaflet + GeoJSON: estados (ADM1) + municipios (ADM2) + parroquias (ADM3) + Guayana Esequiba
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  MapPin, Building2, Users, ChevronRight, ChevronLeft,
-  Shield, Globe, Eye, Skull, X, Loader2, Layers, LayoutGrid,
+  MapPin, Building2, Users, ChevronRight, ChevronLeft, ChevronDown,
+  Shield, Globe, Eye, Skull, X, Loader2, Layers, LayoutGrid, Search,
 } from 'lucide-react'
 import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap } from 'react-leaflet'
 import type { Layer } from 'leaflet'
@@ -15,12 +15,25 @@ import 'leaflet/dist/leaflet.css'
 import { REDI_COLORS, REDI_ORDER, getStateRedi, normalizeName } from '../config/redi'
 import { ESEQUIBO_GEOJSON } from '../config/esequibo'
 import type { StateData, MapMarker, TerritorialSummary, VenezuelaMapProps } from '../config/types'
+import {
+  buildTerritoryIndex,
+  searchTerritory,
+  stateTerritoryKey,
+  territorySearchQueryNorm,
+  type MunicipioIndexItem,
+  type ParishIndexItem,
+  type SearchHit,
+} from '../utils/territoryIndex'
 
 const STATES_GEOJSON_URL = '/geo/ven-states.json'
 const MUNICIPALITIES_GEOJSON_URL = '/geo/ven-municipalities.json'
 /** Límites ADM3 — OCHA/HDX COD-AB (ven_admin3) */
 const PARISHES_GEOJSON_URL = '/geo/ven-parishes.json'
 const REDI_GUAYANA_COLOR = REDI_COLORS['REDI GUAYANA']
+
+function muniExpandKey(stateId: string, muniNorm: string) {
+  return `${stateId}::${muniNorm}`
+}
 
 const geoCache: Record<string, any> = {}
 async function fetchGeoJSON(url: string) {
@@ -100,6 +113,13 @@ export function VenezuelaMap({
   selectedParishRef.current = selectedParish
   const [sortBy, setSortBy] = useState<'org_count' | 'person_count' | 'name'>('org_count')
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [territorialSearchQuery, setTerritorialSearchQuery] = useState('')
+  const [mapSearchOpen, setMapSearchOpen] = useState(false)
+  const [searchHighlightIdx, setSearchHighlightIdx] = useState(0)
+  const mapSearchRef = useRef<HTMLDivElement>(null)
+  const [expandedStateIds, setExpandedStateIds] = useState<Record<string, boolean>>({})
+  const [expandedMuniKeys, setExpandedMuniKeys] = useState<Record<string, boolean>>({})
+  const [parishIndexWanted, setParishIndexWanted] = useState(false)
 
   const [statesGeo, setStatesGeo] = useState<any>(null)
   const [muniGeo, setMuniGeo] = useState<any>(null)
@@ -126,20 +146,51 @@ export function VenezuelaMap({
   }, [stateData])
 
   useEffect(() => {
-    if (!showMunicipalities || muniGeo) return
+    if (muniGeo) return
     fetchGeoJSON(MUNICIPALITIES_GEOJSON_URL)
       .then(setMuniGeo)
       .catch(err => console.error('Error GeoJSON municipios:', err))
-  }, [showMunicipalities, muniGeo])
+  }, [muniGeo])
+
+  const wantParishGeo = showParishes || parishIndexWanted
 
   useEffect(() => {
-    if (!showParishes || parishGeo) return
+    if (showParishes) setParishIndexWanted(true)
+  }, [showParishes])
+
+  useEffect(() => {
+    if (!wantParishGeo || parishGeo) return
     setParishesLoading(true)
     fetchGeoJSON(PARISHES_GEOJSON_URL)
       .then(setParishGeo)
       .catch(err => console.error('Error GeoJSON parroquias:', err))
       .finally(() => setParishesLoading(false))
-  }, [showParishes, parishGeo])
+  }, [wantParishGeo, parishGeo])
+
+  const territoryIndex = useMemo(() => buildTerritoryIndex(muniGeo, parishGeo), [muniGeo, parishGeo])
+
+  useEffect(() => {
+    if (territorialSearchQuery.trim().length >= 2) setParishIndexWanted(true)
+  }, [territorialSearchQuery])
+
+  const searchHits = useMemo(
+    () => searchTerritory(stateData, territoryIndex, territorialSearchQuery),
+    [stateData, territoryIndex, territorialSearchQuery],
+  )
+
+  useEffect(() => {
+    setSearchHighlightIdx(0)
+  }, [territorialSearchQuery, searchHits.length])
+
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (mapSearchRef.current && !mapSearchRef.current.contains(e.target as Node)) {
+        setMapSearchOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [])
 
   useEffect(() => {
     if (!showMunicipalities) setSelectedMunicipality(null)
@@ -385,6 +436,103 @@ export function VenezuelaMap({
     }
   }, [onStateClick])
 
+  const handlePickMunicipioSidebar = useCallback((state: StateData, m: MunicipioIndexItem) => {
+    setSelectedParish(null)
+    setSelectedState(state)
+    onStateClick?.(state)
+    if (m.gid) {
+      setSelectedMunicipality({
+        gid: m.gid,
+        municipality: m.display,
+        state: state.name,
+      })
+    } else {
+      setSelectedMunicipality(null)
+    }
+    setShowMunicipalities(true)
+    if (state.geo_center) {
+      setFlyTarget({ center: [state.geo_center.lat, state.geo_center.lng], zoom: 9 })
+    }
+  }, [onStateClick])
+
+  const handlePickParishSidebar = useCallback((state: StateData, m: MunicipioIndexItem, p: ParishIndexItem) => {
+    setSelectedState(null)
+    setSelectedMunicipality(null)
+    setSelectedParish({
+      pcode: p.pcode,
+      parish: p.display,
+      municipality: m.display,
+      state: state.name,
+    })
+    setShowParishes(true)
+    if (p.lat && p.lng) {
+      setFlyTarget({ center: [p.lat, p.lng], zoom: 13 })
+    }
+  }, [])
+
+  const handleStateRowToggle = useCallback((state: StateData) => {
+    setParishIndexWanted(true)
+    setExpandedStateIds(prev => ({ ...prev, [state.id]: !prev[state.id] }))
+    handleStateClick(state)
+  }, [handleStateClick])
+
+  const applySearchHit = useCallback(
+    (hit: SearchHit) => {
+      setParishIndexWanted(true)
+      if (hit.kind === 'estado') {
+        handleStateClick(hit.state)
+        setExpandedStateIds(prev => ({ ...prev, [hit.state.id]: true }))
+        setTerritorialSearchQuery('')
+        setMapSearchOpen(false)
+        return
+      }
+      if (hit.kind === 'municipio') {
+        handlePickMunicipioSidebar(hit.state, hit.municipio)
+        setExpandedStateIds(prev => ({ ...prev, [hit.state.id]: true }))
+        setExpandedMuniKeys(prev => ({ ...prev, [muniExpandKey(hit.state.id, hit.municipio.norm)]: false }))
+        setTerritorialSearchQuery('')
+        setMapSearchOpen(false)
+        return
+      }
+      handlePickParishSidebar(hit.state, hit.municipio, hit.parish)
+      setExpandedStateIds(prev => ({ ...prev, [hit.state.id]: true }))
+      setExpandedMuniKeys(prev => ({ ...prev, [muniExpandKey(hit.state.id, hit.municipio.norm)]: true }))
+      setTerritorialSearchQuery('')
+      setMapSearchOpen(false)
+    },
+    [handleStateClick, handlePickMunicipioSidebar, handlePickParishSidebar],
+  )
+
+  const searchNormLen = territorySearchQueryNorm(territorialSearchQuery).length
+  const showMapSearchDropdown = mapSearchOpen && searchNormLen >= 2
+
+  const onMapSearchKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (searchNormLen < 2 || searchHits.length === 0) {
+        if (e.key === 'Escape') {
+          setMapSearchOpen(false)
+          ;(e.target as HTMLInputElement).blur()
+        }
+        return
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSearchHighlightIdx(i => Math.min(i + 1, searchHits.length - 1))
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSearchHighlightIdx(i => Math.max(i - 1, 0))
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        const hit = searchHits[searchHighlightIdx]
+        if (hit) applySearchHit(hit)
+      } else if (e.key === 'Escape') {
+        setMapSearchOpen(false)
+        ;(e.target as HTMLInputElement).blur()
+      }
+    },
+    [searchNormLen, searchHits, searchHighlightIdx, applySearchHit],
+  )
+
   const groupedByRedi = useMemo(() => {
     const groups: Record<string, StateData[]> = {}
 
@@ -477,6 +625,118 @@ export function VenezuelaMap({
       <div className="flex-1 min-h-0 flex overflow-hidden rounded-lg border border-white/5">
         {/* Mapa */}
         <div className="flex-1 min-w-0 relative territory-map">
+          {/* Búsqueda territorial flotante (comparte estado con barra lateral) */}
+          <div
+            ref={mapSearchRef}
+            className="absolute top-3 left-1/2 z-[1100] w-[min(calc(100%-1rem),26rem)] -translate-x-1/2 pointer-events-none"
+          >
+            <div className="pointer-events-auto">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neon-blue pointer-events-none drop-shadow-sm" />
+                <input
+                  type="search"
+                  value={territorialSearchQuery}
+                  onChange={(e) => {
+                    setTerritorialSearchQuery(e.target.value)
+                    setMapSearchOpen(true)
+                  }}
+                  onFocus={() => setMapSearchOpen(true)}
+                  onKeyDown={onMapSearchKeyDown}
+                  placeholder="Buscar municipio, parroquia o estado…"
+                  className="input-territory-search w-full pl-10 pr-10 py-2.5 rounded-xl border border-white/20 text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.5)] focus:outline-none focus:ring-2 focus:ring-neon-blue/45 focus:border-neon-blue/60"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-autocomplete="list"
+                  aria-expanded={showMapSearchDropdown}
+                  aria-controls="territory-search-results"
+                />
+                {territorialSearchQuery.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTerritorialSearchQuery('')
+                      setSearchHighlightIdx(0)
+                    }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-gray-500 hover:text-white hover:bg-white/10 transition-colors"
+                    aria-label="Limpiar búsqueda"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+                {showMapSearchDropdown && (
+                  <div
+                    id="territory-search-results"
+                    role="listbox"
+                    className="absolute left-0 right-0 top-[calc(100%+6px)] max-h-[min(18rem,40vh)] overflow-y-auto rounded-xl border border-white/12 bg-[rgba(8,12,18,0.96)] backdrop-blur-xl shadow-[0_16px_48px_rgba(0,0,0,0.55)] ring-1 ring-white/[0.06]"
+                  >
+                    {searchHits.length === 0 ? (
+                      <div className="px-4 py-5 text-center text-xs text-gray-500 font-mono">
+                        Sin coincidencias · prueba otro término
+                      </div>
+                    ) : (
+                      <>
+                        <div className="sticky top-0 z-10 px-3 py-1.5 border-b border-white/8 bg-shadow-900/98 text-[9px] font-mono text-gray-500 uppercase tracking-wider">
+                          {searchHits.length} resultado{searchHits.length === 1 ? '' : 's'} · ↑↓ navegar · Enter seleccionar
+                        </div>
+                        {searchHits.map((hit, idx) => {
+                          const active = idx === searchHighlightIdx
+                          const badge = hit.kind === 'estado' ? 'Estado' : hit.kind === 'municipio' ? 'Municipio' : 'Parroquia'
+                          const Icon = hit.kind === 'estado' ? MapPin : hit.kind === 'municipio' ? Layers : LayoutGrid
+                          const title =
+                            hit.kind === 'estado'
+                              ? hit.state.name
+                              : hit.kind === 'municipio'
+                                ? hit.municipio.display
+                                : hit.parish.display
+                          const sub =
+                            hit.kind === 'estado'
+                              ? getStateRedi(hit.state.name) || '—'
+                              : hit.kind === 'municipio'
+                                ? hit.state.name
+                                : `${hit.municipio.display} · ${hit.state.name}`
+                          const key =
+                            hit.kind === 'estado'
+                              ? `me-${hit.state.id}-${idx}`
+                              : hit.kind === 'municipio'
+                                ? `mm-${hit.state.id}-${hit.municipio.norm}-${idx}`
+                                : `mp-${hit.parish.pcode}-${idx}`
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              role="option"
+                              aria-selected={active}
+                              onMouseEnter={() => setSearchHighlightIdx(idx)}
+                              onClick={() => applySearchHit(hit)}
+                              className={`w-full text-left px-3 py-2.5 border-b border-white/[0.06] flex items-start gap-2.5 transition-colors
+                                ${active ? 'bg-neon-blue/14 border-l-2 border-l-neon-blue pl-[10px]' : 'hover:bg-white/[0.05] border-l-2 border-l-transparent'}`}
+                            >
+                              <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${active ? 'text-neon-blue' : 'text-gray-500'}`} />
+                              <div className="min-w-0 flex-1">
+                                <span
+                                  className={`inline-block text-[8px] font-mono uppercase tracking-wide px-1.5 py-px rounded border mb-0.5
+                                    ${hit.kind === 'parroquia' ? 'border-cyan-500/35 text-cyan-400/90' : hit.kind === 'municipio' ? 'border-purple-500/35 text-purple-300/90' : 'border-white/20 text-gray-400'}`}
+                                >
+                                  {badge}
+                                </span>
+                                <div className={`text-[13px] font-medium leading-snug truncate ${active ? 'text-white' : 'text-gray-200'}`}>
+                                  {title}
+                                </div>
+                                <div className="text-[10px] text-gray-500 font-mono truncate mt-0.5">{sub}</div>
+                              </div>
+                            </button>
+                          )
+                        })}
+                      </>
+                    )}
+                  </div>
+                )}
+                {mapSearchOpen && searchNormLen > 0 && searchNormLen < 2 && (
+                  <p className="mt-2 text-center text-[10px] text-gray-500 font-mono">Mínimo 2 caracteres para buscar</p>
+                )}
+              </div>
+            </div>
+          </div>
           <style>{`
             .territory-map .leaflet-container {
               background: #0a0e14;
@@ -965,72 +1225,221 @@ export function VenezuelaMap({
 
         {/* Sidebar */}
         {sidebarOpen && (
-          <div className="w-56 xl:w-64 flex flex-col bg-shadow-800/80 border-l border-white/5 flex-shrink-0">
-            <div className="p-2 border-b border-white/5 flex-shrink-0">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-gray-500 font-mono">ESTADOS ({stateData.length})</span>
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as any)}
-                  className="text-[9px] bg-shadow-900 border border-white/10 rounded px-1 py-0.5 text-gray-400"
-                >
-                  <option value="org_count">Por orgs</option>
-                  <option value="person_count">Por personas</option>
-                  <option value="name">A-Z</option>
-                </select>
+          <div className="w-[min(20rem,92vw)] xl:w-80 flex flex-col bg-shadow-800/80 border-l border-white/5 flex-shrink-0 min-h-0">
+            <div className="p-2 border-b border-white/5 flex-shrink-0 space-y-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
+                <input
+                  type="search"
+                  value={territorialSearchQuery}
+                  onChange={(e) => setTerritorialSearchQuery(e.target.value)}
+                  placeholder="Buscar estado, municipio, parroquia…"
+                  className="input-territory-search w-full pl-8 pr-8 py-2 rounded-lg border border-white/15 text-[11px] font-medium focus:outline-none focus:ring-1 focus:ring-neon-blue/50 focus:border-neon-blue/50"
+                  autoComplete="off"
+                />
+                {territorialSearchQuery.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setTerritorialSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-gray-500 hover:text-white"
+                    aria-label="Limpiar búsqueda"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
+              {parishesLoading && !parishGeo && parishIndexWanted && (
+                <div className="flex items-center gap-2 text-[9px] text-cyan-400/90 font-mono">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                  Cargando parroquias para búsqueda y árbol…
+                </div>
+              )}
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto">
-              {REDI_ORDER.map(redi => {
-                const rediStates = groupedByRedi.groups[redi]
-                if (!rediStates || rediStates.length === 0) return null
-                const rediColor = REDI_COLORS[redi]
-                return (
-                  <div key={redi}>
-                    <div className="sticky top-0 z-10 px-2 py-1.5 bg-shadow-800/95 backdrop-blur-sm border-b border-white/5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <div className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: rediColor, boxShadow: `0 0 4px ${rediColor}66` }} />
-                          <span className="text-[9px] font-mono font-bold" style={{ color: rediColor }}>{redi}</span>
-                        </div>
-                        <span className="text-[8px] font-mono text-gray-600">{rediStates.length}</span>
+            <div className="px-2 py-1.5 border-b border-white/5 flex-shrink-0 flex items-center justify-between gap-2">
+              <span className="text-[10px] text-gray-500 font-mono">TERRITORIO ({stateData.length})</span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as 'org_count' | 'person_count' | 'name')}
+                className="text-[9px] bg-shadow-900 border border-white/10 rounded px-1 py-0.5 text-gray-400 max-w-[7rem]"
+              >
+                <option value="org_count">Por orgs</option>
+                <option value="person_count">Por personas</option>
+                <option value="name">A-Z</option>
+              </select>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+              {territorySearchQueryNorm(territorialSearchQuery).length >= 2 ? (
+                <div className="pb-2">
+                  {searchHits.length === 0 ? (
+                    <p className="px-3 py-4 text-[10px] text-gray-500 font-mono text-center">Sin coincidencias. Prueba otro término.</p>
+                  ) : (
+                    <>
+                      <div className="sticky top-0 z-10 px-2 py-1 bg-shadow-800/95 backdrop-blur-sm border-b border-white/5 text-[8px] font-mono text-gray-500">
+                        {searchHits.length} resultado{searchHits.length === 1 ? '' : 's'} · clic para ir al mapa
                       </div>
-                    </div>
-                    {rediStates.map(state => {
-                      const isActive = selectedState?.id === state.id
-                      return (
-                        <button
-                          key={state.id}
-                          onClick={() => handleStateClick(state)}
-                          className={`w-full text-left px-2 py-1.5 border-b border-b-white/5 hover:bg-white/5 transition-all
-                            ${isActive ? 'bg-white/10 border-l-2' : 'border-l-2 border-l-transparent'}`}
-                          style={isActive ? { borderLeftColor: rediColor } : undefined}
-                        >
-                          <div className="flex items-center justify-between">
+                      {searchHits.map((hit, idx) => {
+                        const key =
+                          hit.kind === 'estado'
+                            ? `e-${hit.state.id}-${idx}`
+                            : hit.kind === 'municipio'
+                              ? `m-${hit.state.id}-${hit.municipio.norm}-${idx}`
+                              : `p-${hit.parish.pcode}-${idx}`
+                        const badge =
+                          hit.kind === 'estado' ? 'ESTADO' : hit.kind === 'municipio' ? 'MUNICIPIO' : 'PARROQUIA'
+                        const title =
+                          hit.kind === 'estado'
+                            ? hit.state.name
+                            : hit.kind === 'municipio'
+                              ? hit.municipio.display
+                              : hit.parish.display
+                        const sub =
+                          hit.kind === 'estado'
+                            ? `${getStateRedi(hit.state.name) || '—'}`
+                            : hit.kind === 'municipio'
+                              ? `${hit.state.name}`
+                              : `${hit.municipio.display} · ${hit.state.name}`
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => applySearchHit(hit)}
+                            className="w-full text-left px-2.5 py-2 border-b border-white/5 hover:bg-white/[0.06] transition-colors"
+                          >
                             <span
-                              className={`text-[11px] font-medium ${isActive ? '' : 'text-white'}`}
-                              style={isActive ? { color: rediColor } : undefined}
+                              className="inline-block text-[7px] font-mono px-1 py-px rounded mb-0.5 border border-white/15 text-gray-400"
                             >
-                              {state.name}
+                              {badge}
                             </span>
-                            <ChevronRight className="w-3 h-3 text-gray-600" />
+                            <div className="text-[11px] font-medium text-white leading-snug">{title}</div>
+                            <div className="text-[9px] text-gray-500 font-mono mt-0.5">{sub}</div>
+                          </button>
+                        )
+                      })}
+                    </>
+                  )}
+                </div>
+              ) : (
+                REDI_ORDER.map(redi => {
+                  const rediStates = groupedByRedi.groups[redi]
+                  if (!rediStates || rediStates.length === 0) return null
+                  const rediColor = REDI_COLORS[redi]
+                  return (
+                    <div key={redi}>
+                      <div className="sticky top-0 z-10 px-2 py-1.5 bg-shadow-800/95 backdrop-blur-sm border-b border-white/5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <div className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: rediColor, boxShadow: `0 0 4px ${rediColor}66` }} />
+                            <span className="text-[9px] font-mono font-bold truncate" style={{ color: rediColor }}>{redi}</span>
                           </div>
-                          <div className="flex items-center gap-1.5 mt-0.5 pl-0.5">
-                            <span className={`text-[9px] font-mono flex items-center gap-0.5
-                              ${state.org_count > 0 ? 'text-neon-red' : 'text-gray-600'}`}>
-                              <Building2 className="w-2.5 h-2.5" /> {state.org_count}
-                            </span>
-                            <span className={`text-[9px] font-mono flex items-center gap-0.5
-                              ${state.person_count > 0 ? 'text-neon-blue' : 'text-gray-600'}`}>
-                              <Users className="w-2.5 h-2.5" /> {state.person_count}
-                            </span>
+                          <span className="text-[8px] font-mono text-gray-600 flex-shrink-0">{rediStates.length}</span>
+                        </div>
+                      </div>
+                      {rediStates.map(state => {
+                        const isActive = selectedState?.id === state.id
+                        const isExpanded = !!expandedStateIds[state.id]
+                        const munis = territoryIndex.byStateNorm.get(stateTerritoryKey(state)) ?? []
+                        return (
+                          <div key={state.id} className="border-b border-white/5">
+                            <button
+                              type="button"
+                              onClick={() => handleStateRowToggle(state)}
+                              className={`w-full text-left px-2 py-1.5 hover:bg-white/5 transition-all flex items-start gap-1
+                                ${isActive ? 'bg-white/10 border-l-2' : 'border-l-2 border-l-transparent'}`}
+                              style={isActive ? { borderLeftColor: rediColor } : undefined}
+                            >
+                              <span className="mt-0.5 text-gray-500 flex-shrink-0">
+                                {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-1">
+                                  <span
+                                    className={`text-[11px] font-medium truncate ${isActive ? '' : 'text-white'}`}
+                                    style={isActive ? { color: rediColor } : undefined}
+                                  >
+                                    {state.name}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  <span className={`text-[9px] font-mono flex items-center gap-0.5 ${state.org_count > 0 ? 'text-neon-red' : 'text-gray-600'}`}>
+                                    <Building2 className="w-2.5 h-2.5" /> {state.org_count}
+                                  </span>
+                                  <span className={`text-[9px] font-mono flex items-center gap-0.5 ${state.person_count > 0 ? 'text-neon-blue' : 'text-gray-600'}`}>
+                                    <Users className="w-2.5 h-2.5" /> {state.person_count}
+                                  </span>
+                                  {munis.length > 0 && (
+                                    <span className="text-[8px] font-mono text-gray-600 ml-auto">{munis.length} mun.</span>
+                                  )}
+                                </div>
+                              </div>
+                            </button>
+                            {isExpanded && (
+                              <div className="pl-2 pr-1 pb-2 border-t border-white/[0.04] bg-black/15">
+                                {munis.length === 0 ? (
+                                  <p className="text-[9px] text-gray-600 font-mono py-2 px-1">Sin municipios en capa GeoJSON.</p>
+                                ) : (
+                                  munis.map(m => {
+                                    const mk = muniExpandKey(state.id, m.norm)
+                                    const mOpen = !!expandedMuniKeys[mk]
+                                    return (
+                                      <div key={mk} className="mt-1">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            setParishIndexWanted(true)
+                                            setExpandedMuniKeys(prev => ({ ...prev, [mk]: !prev[mk] }))
+                                            handlePickMunicipioSidebar(state, m)
+                                          }}
+                                          className={`w-full text-left flex items-start gap-1 px-1.5 py-1 rounded-md hover:bg-white/[0.06] transition-colors
+                                            ${selectedMunicipality?.gid === m.gid ? 'bg-white/[0.08]' : ''}`}
+                                        >
+                                          <span className="text-gray-500 flex-shrink-0 mt-px">
+                                            {mOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                          </span>
+                                          <div className="min-w-0 flex-1">
+                                            <div className="text-[10px] font-medium text-purple-200/95 truncate">{m.display}</div>
+                                            <div className="text-[8px] font-mono text-gray-600">
+                                              {parishGeo ? `${m.parishes.length} parroquias` : parishIndexWanted && parishesLoading ? '…' : 'Parroquias: —'}
+                                            </div>
+                                          </div>
+                                        </button>
+                                        {mOpen && (
+                                          <div className="ml-4 mt-0.5 space-y-px border-l border-white/10 pl-2">
+                                            {parishesLoading && !parishGeo ? (
+                                              <div className="flex items-center gap-1.5 py-2 text-[9px] text-gray-500 font-mono">
+                                                <Loader2 className="w-3 h-3 animate-spin" /> Cargando parroquias…
+                                              </div>
+                                            ) : m.parishes.length === 0 ? (
+                                              <p className="text-[9px] text-gray-600 font-mono py-1.5">Sin parroquias en el índice.</p>
+                                            ) : (
+                                              m.parishes.map(par => (
+                                                <button
+                                                  key={par.pcode}
+                                                  type="button"
+                                                  onClick={() => handlePickParishSidebar(state, m, par)}
+                                                  className={`w-full text-left py-1 px-1.5 rounded text-[9px] font-mono hover:bg-cyan-500/10 transition-colors truncate
+                                                    ${selectedParish?.pcode === par.pcode ? 'text-cyan-300 bg-cyan-500/10' : 'text-gray-400'}`}
+                                                >
+                                                  {par.display}
+                                                </button>
+                                              ))
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })
+                                )}
+                              </div>
+                            )}
                           </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                )
-              })}
+                        )
+                      })}
+                    </div>
+                  )
+                })
+              )}
             </div>
           </div>
         )}

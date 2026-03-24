@@ -72,6 +72,34 @@
   .input-dark:disabled {
     @apply opacity-50 cursor-not-allowed;
   }
+
+  /**
+   * Búsqueda territorial: evita texto blanco sobre fondo blanco (blur/autofill/light mode).
+   */
+  .input-territory-search {
+    color: #f3f4f6 !important;
+    -webkit-text-fill-color: #f3f4f6;
+    background-color: #0c1018 !important;
+    caret-color: #38bdf8;
+    color-scheme: dark;
+  }
+
+  .input-territory-search::placeholder {
+    color: #6b7280 !important;
+    -webkit-text-fill-color: #6b7280;
+    opacity: 1;
+  }
+
+  .input-territory-search:-webkit-autofill,
+  .input-territory-search:-webkit-autofill:hover,
+  .input-territory-search:-webkit-autofill:focus,
+  .input-territory-search:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 1000px #0c1018 inset !important;
+    box-shadow: 0 0 0 1000px #0c1018 inset !important;
+    -webkit-text-fill-color: #f3f4f6 !important;
+    caret-color: #38bdf8;
+    transition: background-color 99999s ease-out;
+  }
 }
 
 @layer utilities {
