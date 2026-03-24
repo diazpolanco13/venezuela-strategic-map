@@ -97,7 +97,7 @@ export function LocationPicker({
   const [showResults, setShowResults] = useState(false)
   const [reverseGeocoding, setReverseGeocoding] = useState(false)
   const [locatingUser, setLocatingUser] = useState(false)
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

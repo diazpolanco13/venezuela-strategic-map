@@ -2,7 +2,7 @@
   "name": "venezuela-strategic-map",
   "private": false,
   "version": "1.0.0",
-  "description": "Mapa estratégico interactivo de Venezuela con capas GeoJSON, REDI, Esequibo y geolocalización",
+  "description": "Mapa estratégico interactivo de Venezuela con capas GeoJSON, REDI, Guayana Esequiba y geolocalización",
   "type": "module",
   "scripts": {
     "dev": "vite",

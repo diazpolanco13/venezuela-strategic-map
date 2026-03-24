@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { VenezuelaMap } from './components/VenezuelaMap'
 import { LocationPicker, type LocationData } from './components/LocationPicker'
-import type { StateData, MapMarker, TerritorialSummary } from './config/types'
+import type { StateData, TerritorialSummary } from './config/types'
 import { MapPin, X } from 'lucide-react'
 
 // =============================================
@@ -33,14 +33,7 @@ const SAMPLE_STATES: StateData[] = [
   { id: '22', name: 'Amazonas', org_count: 2, person_count: 5, criminal_count: 1, paramilitar_count: 1, narco_count: 1, capital: 'Puerto Ayacucho', population: 181000, geo_center: { lat: 3.4167, lng: -65.8500 } },
   { id: '23', name: 'Delta Amacuro', org_count: 1, person_count: 3, criminal_count: 1, paramilitar_count: 0, narco_count: 0, capital: 'Tucupita', population: 187000, geo_center: { lat: 9.0583, lng: -62.0500 } },
   { id: '24', name: 'Nueva Esparta', org_count: 2, person_count: 7, criminal_count: 1, paramilitar_count: 0, narco_count: 1, capital: 'La Asunción', population: 491000, geo_center: { lat: 11.0000, lng: -63.9167 } },
-  { id: '25', name: 'Guayana Esequiba', org_count: 0, person_count: 0, criminal_count: 0, paramilitar_count: 0, narco_count: 0, capital: '', region: 'En Reclamación', geo_center: { lat: 5.5, lng: -59.2 } },
-]
-
-const SAMPLE_MARKERS: MapMarker[] = [
-  { id: 'm1', name: 'Punto Operativo Norte', lat: 10.48, lng: -66.90, type: 'SEDE', typeLabel: 'Sede', typeIcon: '🏢', typeColor: '#00d4ff', riskLevel: 'HIGH', groupName: 'Organización Alpha', description: 'Centro operativo principal' },
-  { id: 'm2', name: 'Zona de Influencia Sur', lat: 8.62, lng: -70.24, type: 'PUNTO_OPERATIVO', typeLabel: 'Punto Operativo', typeIcon: '📍', typeColor: '#ff3366', riskLevel: 'CRITICAL', groupName: 'Red Delta', description: 'Actividad frecuente' },
-  { id: 'm3', name: 'Depósito Portuario', lat: 10.60, lng: -66.93, type: 'ALMACEN', typeLabel: 'Almacén', typeIcon: '📦', typeColor: '#fbbf24', riskLevel: 'MEDIUM', groupName: 'Los Navegantes' },
-  { id: 'm4', name: 'Casa Segura Tachira', lat: 7.77, lng: -72.23, type: 'GUARIDA', typeLabel: 'Guarida', typeIcon: '🏚️', typeColor: '#ef4444', riskLevel: 'HIGH', groupName: 'Frente Binacional', description: 'Zona fronteriza' },
+  { id: '25', name: 'Guayana Esequiba', org_count: 0, person_count: 0, criminal_count: 0, paramilitar_count: 0, narco_count: 0, capital: '', region: 'REDI GUAYANA', geo_center: { lat: 5.5, lng: -59.2 } },
 ]
 
 const SAMPLE_SUMMARY: TerritorialSummary = {
@@ -91,7 +84,6 @@ export default function App() {
           <VenezuelaMap
             stateData={SAMPLE_STATES}
             summary={SAMPLE_SUMMARY}
-            markers={SAMPLE_MARKERS}
             onStateClick={(state) => console.log('State clicked:', state.name)}
           />
         </div>

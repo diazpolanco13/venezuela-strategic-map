@@ -1,13 +1,12 @@
 // =============================================
-// Polígono del Esequibo (Guayana Esequiba)
-// Territorio en reclamación por Venezuela
+// Polígono Guayana Esequiba (REDI GUAYANA)
 // =============================================
 
 export const ESEQUIBO_GEOJSON: GeoJSON.FeatureCollection = {
   type: 'FeatureCollection',
   features: [{
     type: 'Feature',
-    properties: { name: 'Guayana Esequiba', type: 'ZONA EN RECLAMACIÓN' },
+    properties: { name: 'Guayana Esequiba', type: 'Estado' },
     geometry: {
       type: 'Polygon',
       coordinates: [[

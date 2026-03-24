@@ -42,6 +42,7 @@ export const STATE_REDI: Record<string, string> = {
   'bolivar':          'REDI GUAYANA',
   'amazonas':         'REDI GUAYANA',
   'delta amacuro':    'REDI GUAYANA',
+  'guayana esequiba': 'REDI GUAYANA',
   'nueva esparta':          'REDIMAIN',
   'dependencias federales': 'REDIMAIN',
 }
