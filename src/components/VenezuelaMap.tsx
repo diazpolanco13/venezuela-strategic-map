@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   MapPin, Building2, Users, ChevronRight, ChevronLeft, ChevronDown,
   Shield, Globe, Eye, Skull, X, Loader2, Layers, LayoutGrid, Search,
+  Navigation, Clipboard, Share2, PanelRight,
 } from 'lucide-react'
 import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap } from 'react-leaflet'
 import type { Layer } from 'leaflet'
@@ -15,6 +16,18 @@ import 'leaflet/dist/leaflet.css'
 import { REDI_COLORS, REDI_ORDER, getStateRedi, normalizeName } from '../config/redi'
 import { ESEQUIBO_GEOJSON } from '../config/esequibo'
 import type { StateData, MapMarker, TerritorialSummary, VenezuelaMapProps } from '../config/types'
+import type { ReverseGeoDetail } from '../utils/nominatim'
+import {
+  formatDeviceCaptureDateTime,
+  formatLocationForClipboard,
+  openStreetMapUrl,
+  reverseGeocodeNominatim,
+} from '../utils/nominatim'
+import {
+  findMunicipalityContaining,
+  findParishContaining,
+  municipalityGidFromParishParent,
+} from '../utils/geoHitTest'
 import {
   buildTerritoryIndex,
   searchTerritory,
@@ -24,6 +37,18 @@ import {
   type ParishIndexItem,
   type SearchHit,
 } from '../utils/territoryIndex'
+
+/** Vuelo del mapa: punto o encuadre por límites (menos zoom “violento”). */
+type MapFlyRequest =
+  | { kind: 'point'; center: [number, number]; zoom: number; duration?: number }
+  | {
+      kind: 'bounds'
+      southWest: [number, number]
+      northEast: [number, number]
+      padding?: [number, number]
+      maxZoom?: number
+      duration?: number
+    }
 
 const STATES_GEOJSON_URL = '/geo/ven-states.json'
 const MUNICIPALITIES_GEOJSON_URL = '/geo/ven-municipalities.json'
@@ -45,13 +70,21 @@ async function fetchGeoJSON(url: string) {
   return data
 }
 
-function MapController({ center, zoom }: { center?: [number, number]; zoom?: number }) {
+function MapController({ fly }: { fly: MapFlyRequest | null }) {
   const map = useMap()
   useEffect(() => {
-    if (center && zoom) {
-      map.flyTo(center, zoom, { duration: 1.2 })
+    if (!fly) return
+    if (fly.kind === 'bounds') {
+      const b = L.latLngBounds(fly.southWest, fly.northEast)
+      map.flyToBounds(b, {
+        padding: fly.padding ?? [56, 56],
+        duration: fly.duration ?? 1.5,
+        maxZoom: fly.maxZoom ?? 10,
+      })
+      return
     }
-  }, [center, zoom, map])
+    map.flyTo(fly.center, fly.zoom, { duration: fly.duration ?? 1.15 })
+  }, [fly, map])
   return null
 }
 
@@ -65,6 +98,26 @@ function MapZoomSync({ onZoom }: { onZoom: (z: number) => void }) {
       map.off('zoomend', fn)
     }
   }, [map, onZoom])
+  return null
+}
+
+/** Leaflet guarda ancho al montar; al cerrar el panel hay que recalcular o queda un vacío negro. */
+function MapInvalidateWhenSidebarChanges({ sidebarOpen }: { sidebarOpen: boolean }) {
+  const map = useMap()
+  useEffect(() => {
+    const refresh = () => {
+      map.invalidateSize()
+    }
+    refresh()
+    const t1 = window.setTimeout(refresh, 80)
+    const t2 = window.setTimeout(refresh, 350)
+    window.addEventListener('resize', refresh)
+    return () => {
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+      window.removeEventListener('resize', refresh)
+    }
+  }, [map, sidebarOpen])
   return null
 }
 
@@ -82,6 +135,59 @@ function formatMunicipalityName(raw: string): string {
   let t = raw.replace(/_/g, ' ')
   t = t.replace(/([a-záéíóúñ])([A-ZÁÉÍÓÚÑ])/g, '$1 $2')
   return t.replace(/\s+/g, ' ').trim()
+}
+
+function RediLegendInner({
+  showMunicipalities,
+  showParishes,
+}: {
+  showMunicipalities: boolean
+  showParishes: boolean
+}) {
+  return (
+    <>
+      <span className="text-[9px] text-gray-500 font-mono block mb-1.5">REDI — Regiones Estratégicas</span>
+      <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-x-3 gap-y-1.5">
+        {REDI_ORDER.map(redi => (
+          <div key={redi} className="flex items-start gap-1.5 min-w-0">
+            <div
+              className="w-2 h-2 rounded-sm flex-shrink-0 mt-0.5"
+              style={{ background: REDI_COLORS[redi], boxShadow: `0 0 4px ${REDI_COLORS[redi]}66` }}
+            />
+            <span className="text-[8px] text-gray-400 leading-snug break-words">{redi}</span>
+          </div>
+        ))}
+      </div>
+      {showMunicipalities && (
+        <div className="mt-1.5 pt-1.5 border-t border-white/5 space-y-1">
+          <div className="text-[8px] text-neon-purple font-mono">Capa municipios · clic o hover</div>
+          <div className="text-[7px] text-gray-500 font-mono leading-snug">
+            Zoom ≥ 10: nombres en mapa. Menos zoom: tooltip al pasar el cursor.
+          </div>
+        </div>
+      )}
+      {showParishes && (
+        <div className="mt-1.5 pt-1.5 border-t border-white/5 space-y-1">
+          <div className="text-[8px] text-cyan-400/90 font-mono">Capa parroquias (ADM3)</div>
+          <div className="text-[7px] text-gray-500 font-mono leading-snug">
+            Zoom ≥ 11: nombres en mapa. Capa encima de municipios si ambas activas.
+          </div>
+        </div>
+      )}
+      <div className="mt-1.5 pt-1.5 border-t border-white/5 flex items-start gap-1.5">
+        <div
+          className="w-3 h-2 rounded-sm flex-shrink-0 mt-0.5"
+          style={{ background: REDI_GUAYANA_COLOR, boxShadow: `0 0 6px ${REDI_GUAYANA_COLOR}66` }}
+        />
+        <span
+          className="text-[7px] sm:text-[8px] font-mono leading-snug break-words"
+          style={{ color: REDI_GUAYANA_COLOR }}
+        >
+          Guayana Esequiba · REDI GUAYANA
+        </span>
+      </div>
+    </>
+  )
 }
 
 export function VenezuelaMap({
@@ -112,7 +218,7 @@ export function VenezuelaMap({
   const selectedParishRef = useRef(selectedParish)
   selectedParishRef.current = selectedParish
   const [sortBy, setSortBy] = useState<'org_count' | 'person_count' | 'name'>('org_count')
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [territorialSearchQuery, setTerritorialSearchQuery] = useState('')
   const [mapSearchOpen, setMapSearchOpen] = useState(false)
   const [searchHighlightIdx, setSearchHighlightIdx] = useState(0)
@@ -120,6 +226,8 @@ export function VenezuelaMap({
   const [expandedStateIds, setExpandedStateIds] = useState<Record<string, boolean>>({})
   const [expandedMuniKeys, setExpandedMuniKeys] = useState<Record<string, boolean>>({})
   const [parishIndexWanted, setParishIndexWanted] = useState(false)
+  /** Leyenda REDI: en móvil colapsada por defecto */
+  const [rediLegendMobileOpen, setRediLegendMobileOpen] = useState(false)
 
   const [statesGeo, setStatesGeo] = useState<any>(null)
   const [muniGeo, setMuniGeo] = useState<any>(null)
@@ -129,9 +237,32 @@ export function VenezuelaMap({
   const [parishGeo, setParishGeo] = useState<any>(null)
   const [parishesLoading, setParishesLoading] = useState(false)
 
-  const [flyTarget, setFlyTarget] = useState<{ center: [number, number]; zoom: number } | null>(null)
+  const [flyTarget, setFlyTarget] = useState<MapFlyRequest | null>(null)
+
+  /** Resaltado solo municipio+parroquia del GPS (resto atenuado). */
+  const [myLocMuniGid, setMyLocMuniGid] = useState<string | null>(null)
+  const [myLocParishPcode, setMyLocParishPcode] = useState<string | null>(null)
   const [showMarkers, setShowMarkers] = useState(showMarkersDefault)
   const [geoKey, setGeoKey] = useState(0)
+
+  const [myLocation, setMyLocation] = useState<{
+    lat: number
+    lng: number
+    accuracy?: number
+    /** Epoch ms: instante del arreglo GPS (API o reloj del dispositivo) */
+    capturedAtMs: number
+  } | null>(null)
+  const [myLocationDetail, setMyLocationDetail] = useState<ReverseGeoDetail | null>(null)
+  const [myLocGeoPending, setMyLocGeoPending] = useState(false)
+  const [myLocReversePending, setMyLocReversePending] = useState(false)
+  const [myLocError, setMyLocError] = useState<string | null>(null)
+  const [myLocationCardVisible, setMyLocationCardVisible] = useState(true)
+  const [myLocActionMsg, setMyLocActionMsg] = useState<string | null>(null)
+
+  const myLocVisualIsolate = useMemo(
+    () => Boolean(myLocation && (myLocParishPcode || myLocMuniGid)),
+    [myLocation, myLocParishPcode, myLocMuniGid],
+  )
 
   useEffect(() => {
     if (stateData.length === 0) return
@@ -211,14 +342,15 @@ export function VenezuelaMap({
     const color = REDI_COLORS[redi] || '#6b7280'
     const orgCount = stat?.org_count || 0
 
+    const baseOp = orgCount > 0 ? 0.3 : 0.15
     return {
       fillColor: color,
-      fillOpacity: orgCount > 0 ? 0.3 : 0.15,
+      fillOpacity: myLocVisualIsolate ? baseOp * 0.22 : baseOp,
       color: color,
       weight: 1.5,
-      opacity: 0.7,
+      opacity: myLocVisualIsolate ? 0.38 : 0.7,
     }
-  }, [findStat])
+  }, [findStat, myLocVisualIsolate])
 
   const onEachState = useCallback((feature: any, layer: Layer) => {
     const name = feature?.properties?.NAME_1 || ''
@@ -254,7 +386,7 @@ export function VenezuelaMap({
         setSelectedState(stat)
         onStateClick?.(stat)
         if (stat.geo_center) {
-          setFlyTarget({ center: [stat.geo_center.lat, stat.geo_center.lng], zoom: 7 })
+          setFlyTarget({ kind: 'point', center: [stat.geo_center.lat, stat.geo_center.lng], zoom: 7 })
         }
       }
     })
@@ -297,7 +429,7 @@ export function VenezuelaMap({
         setSelectedMunicipality(null)
         setSelectedState(eseqStat)
         onStateClick?.(eseqStat)
-        setFlyTarget({ center: [5.5, -59.2], zoom: 6 })
+        setFlyTarget({ kind: 'point', center: [5.5, -59.2], zoom: 6 })
       }
     })
   }, [stateData, onStateClick])
@@ -305,14 +437,25 @@ export function VenezuelaMap({
   const getMunicipalityStyle = useCallback((feature: any) => {
     const gid = String(feature?.properties?.GID_2 ?? '')
     const isSel = selectedMunicipality?.gid === gid
-    return {
-      fillColor: isSel ? 'rgba(233, 213, 255, 0.22)' : 'rgba(168, 85, 247, 0.06)',
-      fillOpacity: 1,
-      color: isSel ? '#f0abfc' : 'rgba(167, 139, 250, 0.42)',
-      weight: isSel ? 2.5 : 0.9,
-      opacity: isSel ? 1 : 0.88,
+    const isMyLoc = myLocMuniGid === gid
+    const hi = isSel || isMyLoc
+    if (myLocVisualIsolate && !hi) {
+      return {
+        fillColor: 'rgba(88, 28, 135, 0.04)',
+        fillOpacity: 0.4,
+        color: 'rgba(167, 139, 250, 0.12)',
+        weight: 0.35,
+        opacity: 0.42,
+      }
     }
-  }, [selectedMunicipality])
+    return {
+      fillColor: hi ? 'rgba(233, 213, 255, 0.26)' : 'rgba(168, 85, 247, 0.06)',
+      fillOpacity: 1,
+      color: hi ? '#f0abfc' : 'rgba(167, 139, 250, 0.42)',
+      weight: hi ? 2.6 : 0.9,
+      opacity: hi ? 1 : 0.88,
+    }
+  }, [selectedMunicipality, myLocMuniGid, myLocVisualIsolate])
 
   const getMunicipalityStyleRef = useRef(getMunicipalityStyle)
   getMunicipalityStyleRef.current = getMunicipalityStyle
@@ -364,14 +507,25 @@ export function VenezuelaMap({
   const getParishStyle = useCallback((feature: any) => {
     const pcode = String(feature?.properties?.adm3_pcode ?? '')
     const isSel = selectedParish?.pcode === pcode
-    return {
-      fillColor: isSel ? 'rgba(103, 232, 249, 0.2)' : 'rgba(34, 211, 238, 0.04)',
-      fillOpacity: 1,
-      color: isSel ? '#67e8f9' : 'rgba(34, 211, 238, 0.38)',
-      weight: isSel ? 2.2 : 0.55,
-      opacity: isSel ? 1 : 0.82,
+    const isMyLoc = myLocParishPcode === pcode
+    const hi = isSel || isMyLoc
+    if (myLocVisualIsolate && !hi) {
+      return {
+        fillColor: 'rgba(8, 47, 73, 0.06)',
+        fillOpacity: 0.35,
+        color: 'rgba(34, 211, 238, 0.1)',
+        weight: 0.3,
+        opacity: 0.38,
+      }
     }
-  }, [selectedParish])
+    return {
+      fillColor: hi ? 'rgba(103, 232, 249, 0.24)' : 'rgba(34, 211, 238, 0.04)',
+      fillOpacity: 1,
+      color: hi ? '#67e8f9' : 'rgba(34, 211, 238, 0.38)',
+      weight: hi ? 2.35 : 0.55,
+      opacity: hi ? 1 : 0.82,
+    }
+  }, [selectedParish, myLocParishPcode, myLocVisualIsolate])
 
   const getParishStyleRef = useRef(getParishStyle)
   getParishStyleRef.current = getParishStyle
@@ -432,7 +586,7 @@ export function VenezuelaMap({
     setSelectedState(state)
     onStateClick?.(state)
     if (state.geo_center) {
-      setFlyTarget({ center: [state.geo_center.lat, state.geo_center.lng], zoom: 7 })
+      setFlyTarget({ kind: 'point', center: [state.geo_center.lat, state.geo_center.lng], zoom: 7 })
     }
   }, [onStateClick])
 
@@ -451,7 +605,7 @@ export function VenezuelaMap({
     }
     setShowMunicipalities(true)
     if (state.geo_center) {
-      setFlyTarget({ center: [state.geo_center.lat, state.geo_center.lng], zoom: 9 })
+      setFlyTarget({ kind: 'point', center: [state.geo_center.lat, state.geo_center.lng], zoom: 9 })
     }
   }, [onStateClick])
 
@@ -466,7 +620,7 @@ export function VenezuelaMap({
     })
     setShowParishes(true)
     if (p.lat && p.lng) {
-      setFlyTarget({ center: [p.lat, p.lng], zoom: 13 })
+      setFlyTarget({ kind: 'point', center: [p.lat, p.lng], zoom: 13 })
     }
   }, [])
 
@@ -502,6 +656,194 @@ export function VenezuelaMap({
     },
     [handleStateClick, handlePickMunicipioSidebar, handlePickParishSidebar],
   )
+
+  useEffect(() => {
+    if (myLocation) setMyLocationCardVisible(true)
+  }, [myLocation])
+
+  const locateMe = useCallback(() => {
+    setMyLocError(null)
+    setMyLocActionMsg(null)
+    if (!navigator.geolocation) {
+      setMyLocError('Tu navegador no permite geolocalización.')
+      return
+    }
+    setMyLocGeoPending(true)
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude
+        const lng = pos.coords.longitude
+        const capturedAtMs =
+          typeof pos.timestamp === 'number' && pos.timestamp > 1e12 ? pos.timestamp : Date.now()
+        setShowMunicipalities(true)
+        setShowParishes(true)
+        setParishIndexWanted(true)
+        setMyLocation({ lat, lng, accuracy: pos.coords.accuracy, capturedAtMs })
+        setMyLocGeoPending(false)
+        setMyLocReversePending(true)
+        setMyLocationDetail(null)
+        try {
+          const detail = await reverseGeocodeNominatim(lat, lng)
+          setMyLocationDetail(detail)
+        } catch {
+          setMyLocationDetail({ lat, lng, displayName: 'Ubicación GPS' })
+        } finally {
+          setMyLocReversePending(false)
+        }
+      },
+      (err) => {
+        setMyLocGeoPending(false)
+        const code = (err as GeolocationPositionError).code
+        if (code === 1) setMyLocError('Permiso de ubicación denegado.')
+        else if (code === 2) setMyLocError('Posición no disponible.')
+        else if (code === 3) setMyLocError('Tiempo de espera agotado.')
+        else setMyLocError('No se pudo obtener tu posición.')
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 },
+    )
+  }, [])
+
+  const clearMyLocationMarker = useCallback(() => {
+    setMyLocation(null)
+    setMyLocationDetail(null)
+    setMyLocError(null)
+    setMyLocActionMsg(null)
+    setMyLocMuniGid(null)
+    setMyLocParishPcode(null)
+  }, [])
+
+  /** Tras GPS: encuadre suave por polígono parroquia/municipio y foco visual. */
+  useEffect(() => {
+    if (!myLocation) {
+      setMyLocMuniGid(null)
+      setMyLocParishPcode(null)
+      return
+    }
+    if (!muniGeo?.features?.length) return
+
+    const { lat, lng } = myLocation
+
+    const flyToBoundsOf = (feature: GeoJSON.Feature, maxZoom: number, pad: [number, number]) => {
+      try {
+        const b = L.geoJSON(feature as GeoJSON.GeoJsonObject).getBounds()
+        if (!b.isValid()) return
+        const sw = b.getSouthWest()
+        const ne = b.getNorthEast()
+        setFlyTarget({
+          kind: 'bounds',
+          southWest: [sw.lat, sw.lng],
+          northEast: [ne.lat, ne.lng],
+          maxZoom,
+          padding: pad,
+          duration: 1.55,
+        })
+      } catch {
+        setFlyTarget({ kind: 'point', center: [lat, lng], zoom: 10, duration: 1.3 })
+      }
+    }
+
+    if (!parishGeo?.features?.length) {
+      const muniFeat = findMunicipalityContaining(muniGeo, lat, lng)
+      if (muniFeat) {
+        const gid = String((muniFeat.properties as { GID_2?: string })?.GID_2 ?? '')
+        setMyLocMuniGid(gid || null)
+        setMyLocParishPcode(null)
+        flyToBoundsOf(muniFeat, 10, [52, 52])
+      } else {
+        setMyLocMuniGid(null)
+        setMyLocParishPcode(null)
+        setFlyTarget({ kind: 'point', center: [lat, lng], zoom: 10, duration: 1.3 })
+      }
+      return
+    }
+
+    const parishFeat = findParishContaining(parishGeo, lat, lng)
+    if (parishFeat) {
+      const pr = parishFeat.properties as Record<string, string | undefined>
+      const pcode = String(pr.adm3_pcode ?? '')
+      const adm1 = String(pr.adm1_name ?? '')
+      const adm2 = String(pr.adm2_name ?? '')
+      const gid = municipalityGidFromParishParent(muniGeo, adm1, adm2)
+      setMyLocParishPcode(pcode || null)
+      setMyLocMuniGid(gid)
+      flyToBoundsOf(parishFeat, 10, [72, 72])
+      return
+    }
+
+    const muniFeat = findMunicipalityContaining(muniGeo, lat, lng)
+    if (muniFeat) {
+      const gid = String((muniFeat.properties as { GID_2?: string })?.GID_2 ?? '')
+      setMyLocMuniGid(gid || null)
+      setMyLocParishPcode(null)
+      flyToBoundsOf(muniFeat, 10, [56, 56])
+      return
+    }
+
+    setMyLocMuniGid(null)
+    setMyLocParishPcode(null)
+    setFlyTarget({ kind: 'point', center: [lat, lng], zoom: 10, duration: 1.3 })
+  }, [myLocation, muniGeo, parishGeo])
+
+  const myLocationClipboardPayload = useCallback((): ReverseGeoDetail | null => {
+    if (!myLocation) return null
+    const base = myLocationDetail ?? { lat: myLocation.lat, lng: myLocation.lng }
+    return { ...base, capturedAtMs: myLocation.capturedAtMs }
+  }, [myLocation, myLocationDetail])
+
+  const copyMyLocation = useCallback(async () => {
+    const d = myLocationClipboardPayload()
+    if (!d) return
+    try {
+      await navigator.clipboard.writeText(formatLocationForClipboard(d))
+      setMyLocActionMsg('Copiado al portapapeles')
+      window.setTimeout(() => setMyLocActionMsg(null), 2500)
+    } catch {
+      setMyLocActionMsg('No se pudo copiar')
+      window.setTimeout(() => setMyLocActionMsg(null), 2500)
+    }
+  }, [myLocationClipboardPayload])
+
+  const shareMyLocation = useCallback(async () => {
+    const d = myLocationClipboardPayload()
+    if (!d || !myLocation) return
+    const text = formatLocationForClipboard(d)
+    const url = openStreetMapUrl(myLocation.lat, myLocation.lng)
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'Mi ubicación', text: `${text}\n${url}`, url })
+      } else {
+        await navigator.clipboard.writeText(`${text}\n${url}`)
+        setMyLocActionMsg('Enlace copiado (compartir no disponible)')
+        window.setTimeout(() => setMyLocActionMsg(null), 2500)
+      }
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return
+      try {
+        await navigator.clipboard.writeText(`${text}\n${url}`)
+        setMyLocActionMsg('Copiado como alternativa')
+        window.setTimeout(() => setMyLocActionMsg(null), 2500)
+      } catch {
+        setMyLocActionMsg('No se pudo compartir ni copiar')
+        window.setTimeout(() => setMyLocActionMsg(null), 2500)
+      }
+    }
+  }, [myLocation, myLocationClipboardPayload])
+
+  const userLocationIcon = useMemo(() => {
+    if (!myLocation) return null
+    return L.divIcon({
+      className: 'user-loc-divicon',
+      html: `
+      <div class="user-loc-marker-root" aria-hidden="true">
+        <span class="user-loc-ring"></span>
+        <span class="user-loc-ring user-loc-ring-delay"></span>
+        <span class="user-loc-core"></span>
+      </div>
+    `,
+      iconSize: [56, 56],
+      iconAnchor: [28, 28],
+    })
+  }, [myLocation])
 
   const searchNormLen = territorySearchQueryNorm(territorialSearchQuery).length
   const showMapSearchDropdown = mapSearchOpen && searchNormLen >= 2
@@ -557,49 +899,82 @@ export function VenezuelaMap({
   return (
     <div className={`h-full flex flex-col overflow-hidden ${className}`}>
       {/* Header */}
-      <div className="flex items-center justify-between pb-2 flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <MapPin className="w-5 h-5 text-neon-blue flex-shrink-0" />
-          <h1 className="text-base font-display font-bold text-white">TERRITORIO VENEZUELA</h1>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pb-2 flex-shrink-0 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <MapPin className="w-4 h-4 sm:w-5 sm:h-5 text-neon-blue flex-shrink-0" />
+          <h1 className="text-sm sm:text-base font-display font-bold text-white truncate">TERRITORIO VENEZUELA</h1>
           <span className="text-[10px] text-gray-600 font-mono hidden sm:block">
             Mapa estratégico
           </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 md:gap-3">
           <button
+            type="button"
             onClick={() => setShowMunicipalities(!showMunicipalities)}
-            className={`hidden md:flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+            title="Capa municipios"
+            className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
               ${showMunicipalities
                 ? 'bg-neon-purple/20 border-neon-purple/40 text-neon-purple'
                 : 'bg-shadow-800 border-white/10 text-gray-500 hover:text-gray-300'
               }`}
           >
-            <Layers className="w-3 h-3" />
-            Municipios
+            <Layers className="w-3 h-3 flex-shrink-0" />
+            <span className="hidden sm:inline">Municipios</span>
           </button>
           <button
             type="button"
             onClick={() => setShowParishes(!showParishes)}
-            className={`hidden md:flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+            title="Capa parroquias"
+            className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
               ${showParishes
                 ? 'bg-cyan-500/15 border-cyan-400/45 text-cyan-300'
                 : 'bg-shadow-800 border-white/10 text-gray-500 hover:text-gray-300'
               }`}
           >
-            <LayoutGrid className="w-3 h-3" />
-            Parroquias
+            <LayoutGrid className="w-3 h-3 flex-shrink-0" />
+            <span className="hidden sm:inline">Parroquias</span>
           </button>
+          <button
+            type="button"
+            onClick={locateMe}
+            disabled={myLocGeoPending}
+            className="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+              bg-shadow-800 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 hover:border-cyan-400/55
+              disabled:opacity-45 disabled:cursor-not-allowed"
+            title="Geolocalizar y mostrar tu posición en el mapa"
+          >
+            {myLocGeoPending ? (
+              <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+            ) : (
+              <Navigation className="w-3 h-3 flex-shrink-0" />
+            )}
+            <span className="hidden sm:inline">Mi ubicación</span>
+          </button>
+          {myLocation && !myLocationCardVisible && (
+            <button
+              type="button"
+              onClick={() => setMyLocationCardVisible(true)}
+              title="Mostrar tarjeta de ubicación"
+              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono border border-white/15 text-gray-400 hover:text-cyan-200 hover:border-cyan-500/30"
+            >
+              <Clipboard className="w-3 h-3 sm:hidden flex-shrink-0" aria-hidden />
+              <span className="hidden sm:inline">Ver tarjeta</span>
+            </button>
+          )}
           {markers.length > 0 && (
             <button
+              type="button"
+              title="Marcadores en mapa"
               onClick={() => setShowMarkers(!showMarkers)}
-              className={`hidden md:flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+              className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
                 ${showMarkers
                   ? 'bg-neon-green/20 border-neon-green/40 text-neon-green'
                   : 'bg-shadow-800 border-white/10 text-gray-500 hover:text-gray-300'
                 }`}
             >
-              <MapPin className="w-3 h-3" />
-              Ubicaciones ({markers.length})
+              <MapPin className="w-3 h-3 flex-shrink-0" />
+              <span className="hidden sm:inline">Ubicaciones ({markers.length})</span>
+              <span className="sm:hidden tabular-nums">{markers.length}</span>
             </button>
           )}
           {summary && (
@@ -621,14 +996,14 @@ export function VenezuelaMap({
         </div>
       </div>
 
-      {/* Mapa + Sidebar */}
-      <div className="flex-1 min-h-0 flex overflow-hidden rounded-lg border border-white/5">
+      {/* Mapa + Sidebar: en &lt;lg el panel es drawer encima del mapa a pantalla completa */}
+      <div className="flex-1 min-h-0 flex overflow-hidden rounded-lg border border-white/5 relative">
         {/* Mapa */}
-        <div className="flex-1 min-w-0 relative territory-map">
+        <div className="relative territory-map min-h-0 min-w-0 w-full flex-1">
           {/* Búsqueda territorial flotante (comparte estado con barra lateral) */}
           <div
             ref={mapSearchRef}
-            className="absolute top-3 left-1/2 z-[1100] w-[min(calc(100%-1rem),26rem)] -translate-x-1/2 pointer-events-none"
+            className="absolute top-2 sm:top-3 left-1/2 z-[1100] w-[min(calc(100%-2.5rem),26rem)] sm:w-[min(calc(100%-1rem),26rem)] -translate-x-1/2 pointer-events-none"
           >
             <div className="pointer-events-auto">
               <div className="relative">
@@ -643,7 +1018,7 @@ export function VenezuelaMap({
                   onFocus={() => setMapSearchOpen(true)}
                   onKeyDown={onMapSearchKeyDown}
                   placeholder="Buscar municipio, parroquia o estado…"
-                  className="input-territory-search w-full pl-10 pr-10 py-2.5 rounded-xl border border-white/20 text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.5)] focus:outline-none focus:ring-2 focus:ring-neon-blue/45 focus:border-neon-blue/60"
+                  className="input-territory-search w-full pl-9 sm:pl-10 pr-9 sm:pr-10 py-2 sm:py-2.5 rounded-xl border border-white/20 text-[12px] sm:text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.5)] focus:outline-none focus:ring-2 focus:ring-neon-blue/45 focus:border-neon-blue/60"
                   autoComplete="off"
                   spellCheck={false}
                   aria-autocomplete="list"
@@ -840,6 +1215,66 @@ export function VenezuelaMap({
               text-align: center;
               line-height: 1.1;
             }
+            @keyframes user-loc-pulse {
+              0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0.9; }
+              65% { opacity: 0.2; }
+              100% { transform: translate(-50%, -50%) scale(2.15); opacity: 0; }
+            }
+            @keyframes user-loc-core-glow {
+              0%, 100% {
+                box-shadow:
+                  0 0 14px #22d3ee,
+                  0 0 32px rgba(34, 211, 238, 0.5),
+                  inset 0 0 10px rgba(255, 255, 255, 0.35);
+                transform: scale(1) rotate(0deg);
+              }
+              50% {
+                box-shadow:
+                  0 0 22px #a5f3fc,
+                  0 0 48px rgba(165, 243, 252, 0.55),
+                  inset 0 0 14px rgba(255, 255, 255, 0.5);
+                transform: scale(1.12) rotate(2deg);
+              }
+            }
+            .user-loc-divicon {
+              background: transparent !important;
+              border: none !important;
+            }
+            .user-loc-marker-root {
+              position: relative;
+              width: 56px;
+              height: 56px;
+              pointer-events: none;
+            }
+            .user-loc-ring {
+              position: absolute;
+              left: 50%;
+              top: 50%;
+              width: 34px;
+              height: 34px;
+              margin: 0;
+              transform: translate(-50%, -50%);
+              border-radius: 50%;
+              border: 2px solid rgba(34, 211, 238, 0.9);
+              animation: user-loc-pulse 2.1s ease-out infinite;
+              box-sizing: border-box;
+            }
+            .user-loc-ring-delay {
+              animation-delay: 1.05s;
+            }
+            .user-loc-core {
+              position: absolute;
+              left: 50%;
+              top: 50%;
+              width: 15px;
+              height: 15px;
+              margin-left: -7.5px;
+              margin-top: -7.5px;
+              border-radius: 50%;
+              background: linear-gradient(145deg, #f0f9ff, #06b6d4);
+              border: 2px solid #fff;
+              animation: user-loc-core-glow 1.25s ease-in-out infinite;
+            }
           `}</style>
 
           <div className="absolute inset-0">
@@ -847,7 +1282,7 @@ export function VenezuelaMap({
               center={[7.5, -66.58]}
               zoom={5.5}
               minZoom={4}
-              maxZoom={14}
+              maxZoom={16}
               maxBounds={[[0, -78], [16, -55]]}
               style={{ width: '100%', height: '100%' }}
               zoomControl={true}
@@ -857,12 +1292,13 @@ export function VenezuelaMap({
                 attribution='&copy; OpenStreetMap'
               />
 
-              <MapController center={flyTarget?.center} zoom={flyTarget?.zoom} />
+              <MapController fly={flyTarget} />
               <MapZoomSync onZoom={setMapZoom} />
+              <MapInvalidateWhenSidebarChanges sidebarOpen={sidebarOpen} />
 
               {statesGeo && (
                 <GeoJSON
-                  key={`states-${geoKey}`}
+                  key={`states-${geoKey}-${myLocVisualIsolate ? 'iso' : 'all'}`}
                   data={statesGeo}
                   style={stateStyle}
                   onEachFeature={onEachState}
@@ -870,21 +1306,21 @@ export function VenezuelaMap({
               )}
 
               <GeoJSON
-                key="esequibo"
+                key={`esequibo-${myLocVisualIsolate ? 'd' : 'n'}`}
                 data={ESEQUIBO_GEOJSON}
                 style={() => ({
                   fillColor: REDI_GUAYANA_COLOR,
-                  fillOpacity: 0.22,
+                  fillOpacity: myLocVisualIsolate ? 0.07 : 0.22,
                   color: REDI_GUAYANA_COLOR,
                   weight: 1.5,
-                  opacity: 0.85,
+                  opacity: myLocVisualIsolate ? 0.35 : 0.85,
                 })}
                 onEachFeature={onEachEsequibo}
               />
 
               {showMunicipalities && muniGeo && (
                 <GeoJSON
-                  key={`municipalities-${mapZoom >= 10}`}
+                  key={`municipalities-${mapZoom >= 10}-${myLocMuniGid ?? 'x'}-${myLocVisualIsolate ? 'f' : 'a'}`}
                   data={muniGeo}
                   style={getMunicipalityStyle}
                   onEachFeature={onEachMunicipality}
@@ -893,7 +1329,7 @@ export function VenezuelaMap({
 
               {showParishes && parishGeo && (
                 <GeoJSON
-                  key={`parishes-${mapZoom >= 11}`}
+                  key={`parishes-${mapZoom >= 11}-${myLocParishPcode ?? 'x'}-${myLocVisualIsolate ? 'f' : 'a'}`}
                   data={parishGeo}
                   style={getParishStyle}
                   onEachFeature={onEachParish}
@@ -957,8 +1393,130 @@ export function VenezuelaMap({
                   </Marker>
                 )
               })}
+
+              {myLocation && userLocationIcon && (
+                <Marker position={[myLocation.lat, myLocation.lng]} icon={userLocationIcon} />
+              )}
             </MapContainer>
           </div>
+
+          {myLocError && (
+            <div className="absolute top-16 sm:top-14 left-3 right-3 sm:left-14 sm:right-auto z-[1001] max-w-[min(20rem,calc(100%-1.5rem))] sm:max-w-[min(20rem,calc(100%-5rem))] rounded-lg border border-neon-red/40 bg-shadow-900/95 px-3 py-2 text-[10px] font-mono text-red-200 shadow-lg backdrop-blur-sm">
+              {myLocError}
+            </div>
+          )}
+
+          <AnimatePresence>
+            {myLocation && myLocationCardVisible && (
+              <motion.div
+                initial={{ opacity: 0, x: 16 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 16 }}
+                transition={{ duration: 0.22 }}
+                className="absolute top-[6.25rem] sm:top-[5.75rem] lg:top-14 left-2 right-2 sm:left-auto sm:right-3 z-[1001] w-auto sm:w-[min(18rem,calc(100vw-1.5rem))] max-w-none sm:max-w-[min(18rem,calc(100vw-1.5rem))] max-lg:max-h-[min(52vh,calc(100vh-12rem))] max-lg:overflow-y-auto rounded-lg border border-cyan-500/45 bg-shadow-900/96 shadow-2xl backdrop-blur-md overflow-hidden"
+              >
+                <div className="flex items-start justify-between gap-1.5 sm:gap-2 border-b border-cyan-500/25 px-2 py-2 sm:px-3 sm:py-2.5">
+                  <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                    <Navigation className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-400 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <h3 className="text-[11px] sm:text-xs font-bold text-white leading-tight truncate">Tu ubicación</h3>
+                      <p
+                        className="text-[7px] sm:text-[9px] text-cyan-400/85 font-mono mt-0.5 sm:mt-1 leading-snug line-clamp-2 sm:line-clamp-none"
+                        title={`${formatDeviceCaptureDateTime(myLocation.capturedAtMs)} — reloj del dispositivo`}
+                      >
+                        <span className="text-gray-500 max-sm:hidden">Fecha y hora · </span>
+                        <span className="sm:hidden text-gray-500">Fecha · </span>
+                        {formatDeviceCaptureDateTime(myLocation.capturedAtMs)}
+                      </p>
+                      {typeof myLocation.accuracy === 'number' && (
+                        <p className="text-[8px] sm:text-[9px] text-gray-500 font-mono mt-0.5">
+                          ±{Math.round(myLocation.accuracy)} m GPS
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setMyLocationCardVisible(false)}
+                    className="text-gray-500 hover:text-white flex-shrink-0 p-0.5 rounded"
+                    aria-label="Cerrar tarjeta"
+                  >
+                    <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  </button>
+                </div>
+                <div className="px-2 py-2 sm:px-3 sm:py-2.5 space-y-1 sm:space-y-1.5 text-[9px] sm:text-[10px] font-mono text-gray-300">
+                  {myLocReversePending && (
+                    <div className="flex items-center gap-2 text-cyan-400/90 py-0.5">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                      Resolviendo dirección (OSM)…
+                    </div>
+                  )}
+                  {!myLocReversePending && (
+                    <>
+                      {myLocationDetail?.estado && (
+                        <p>
+                          <span className="text-gray-500">Estado</span>{' '}
+                          <span className="text-gray-100">{myLocationDetail.estado}</span>
+                        </p>
+                      )}
+                      {myLocationDetail?.municipio && (
+                        <p>
+                          <span className="text-gray-500">Municipio</span>{' '}
+                          <span className="text-gray-100">{myLocationDetail.municipio}</span>
+                        </p>
+                      )}
+                      {myLocationDetail?.parroquia && (
+                        <p>
+                          <span className="text-gray-500">Parroquia / sector</span>{' '}
+                          <span className="text-gray-100">{myLocationDetail.parroquia}</span>
+                        </p>
+                      )}
+                      {myLocationDetail?.street && (
+                        <p>
+                          <span className="text-gray-500">Calle</span>{' '}
+                          <span className="text-gray-100">{myLocationDetail.street}</span>
+                        </p>
+                      )}
+                      <p className="text-[7px] sm:text-[8px] text-gray-600 leading-snug hidden sm:block">
+                        Parroquia administrativa puede no coincidir con OSM (sector/barrio).
+                      </p>
+                    </>
+                  )}
+                  <p className="pt-1 border-t border-white/10 text-cyan-200/90 text-[9px] sm:text-[10px] break-all">
+                    {myLocation.lat.toFixed(6)}, {myLocation.lng.toFixed(6)}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-1.5 sm:gap-2 border-t border-white/10 px-2 py-2 sm:px-3 sm:py-2.5 bg-black/25">
+                  <button
+                    type="button"
+                    onClick={() => void copyMyLocation()}
+                    className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-md text-[9px] sm:text-[10px] font-mono border border-white/15 bg-white/5 text-gray-200 hover:bg-white/10 hover:border-cyan-500/35"
+                  >
+                    <Clipboard className="w-3 h-3 flex-shrink-0" />
+                    Copiar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void shareMyLocation()}
+                    className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-md text-[9px] sm:text-[10px] font-mono border border-cyan-500/30 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
+                  >
+                    <Share2 className="w-3 h-3 flex-shrink-0" />
+                    Compartir
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearMyLocationMarker}
+                    className="ml-auto text-[9px] sm:text-[10px] font-mono text-gray-500 hover:text-red-300 px-1 py-1 sm:py-1.5"
+                  >
+                    Quitar
+                  </button>
+                </div>
+                {myLocActionMsg && (
+                  <p className="px-2 sm:px-3 pb-1.5 sm:pb-2 text-[8px] sm:text-[9px] font-mono text-neon-green">{myLocActionMsg}</p>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {(geoLoading || (parishesLoading && showParishes && !parishGeo)) && (
             <div className="absolute inset-0 z-[1000] flex items-center justify-center bg-shadow-900/60 backdrop-blur-sm pointer-events-none">
@@ -974,7 +1532,7 @@ export function VenezuelaMap({
           )}
 
           {/* Leyenda REDI + panel municipio */}
-          <div className="absolute bottom-3 left-3 z-[1000] flex flex-col gap-2 items-stretch max-w-[min(18rem,calc(100vw-1.5rem))]">
+          <div className="absolute bottom-2 left-2 right-2 sm:bottom-3 sm:left-3 sm:right-auto z-[1000] flex flex-col gap-2 items-stretch max-w-none sm:max-w-[min(18rem,calc(100vw-1.5rem))] pointer-events-none [&>*]:pointer-events-auto">
             <AnimatePresence>
               {selectedParish && showParishes && (
                 <motion.div
@@ -1085,35 +1643,44 @@ export function VenezuelaMap({
               )}
             </AnimatePresence>
 
-            <div className="bg-shadow-900/90 backdrop-blur-sm border border-white/10 rounded-lg px-3 py-2">
-              <span className="text-[9px] text-gray-500 font-mono block mb-1.5">REDI — Regiones Estratégicas</span>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                {REDI_ORDER.map(redi => (
-                  <div key={redi} className="flex items-center gap-1">
-                    <div className="w-2 h-2 rounded-sm" style={{ background: REDI_COLORS[redi], boxShadow: `0 0 4px ${REDI_COLORS[redi]}66` }} />
-                    <span className="text-[8px] text-gray-400">{redi}</span>
-                  </div>
-                ))}
-              </div>
-              {showMunicipalities && (
-                <div className="mt-1.5 pt-1.5 border-t border-white/5 space-y-1">
-                  <div className="text-[8px] text-neon-purple font-mono">Capa municipios · clic o hover</div>
-                  <div className="text-[7px] text-gray-500 font-mono leading-snug">
-                    Zoom ≥ 10: nombres en mapa. Menos zoom: tooltip al pasar el cursor.
-                  </div>
-                </div>
-              )}
-              {showParishes && (
-                <div className="mt-1.5 pt-1.5 border-t border-white/5 space-y-1">
-                  <div className="text-[8px] text-cyan-400/90 font-mono">Capa parroquias (ADM3)</div>
-                  <div className="text-[7px] text-gray-500 font-mono leading-snug">
-                    Zoom ≥ 11: nombres en mapa. Capa encima de municipios si ambas activas.
-                  </div>
-                </div>
-              )}
-              <div className="mt-1 pt-1 border-t border-white/5 flex items-center gap-1">
-                <div className="w-3 h-2 rounded-sm" style={{ background: REDI_GUAYANA_COLOR, boxShadow: `0 0 6px ${REDI_GUAYANA_COLOR}66` }} />
-                <span className="text-[8px] font-mono" style={{ color: REDI_GUAYANA_COLOR }}>Guayana Esequiba · REDI GUAYANA</span>
+            <div className="lg:hidden flex flex-col gap-1.5 items-stretch">
+              <button
+                type="button"
+                onClick={() => setRediLegendMobileOpen(o => !o)}
+                aria-expanded={rediLegendMobileOpen}
+                className="flex w-full items-center justify-between gap-2 rounded-lg border border-white/12 bg-shadow-900/95 px-2.5 py-2 text-left shadow-md backdrop-blur-sm transition-colors hover:bg-white/[0.06]"
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  <Layers className="h-3.5 w-3.5 flex-shrink-0 text-neon-blue" aria-hidden />
+                  <span className="text-[10px] font-mono text-gray-200">
+                    {rediLegendMobileOpen ? 'Ocultar leyenda REDI' : 'Leyenda REDI'}
+                  </span>
+                </span>
+                <ChevronDown
+                  className={`h-4 w-4 flex-shrink-0 text-gray-500 transition-transform ${rediLegendMobileOpen ? 'rotate-180' : ''}`}
+                  aria-hidden
+                />
+              </button>
+              <AnimatePresence initial={false}>
+                {rediLegendMobileOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 6 }}
+                    transition={{ duration: 0.18 }}
+                    className="rounded-lg"
+                  >
+                    <div className="max-h-[min(38vh,18rem)] overflow-y-auto overscroll-contain rounded-lg border border-white/10 bg-shadow-900/90 px-2.5 py-2 shadow-lg backdrop-blur-sm">
+                      <RediLegendInner showMunicipalities={showMunicipalities} showParishes={showParishes} />
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            <div className="hidden max-h-[min(42vh,20rem)] overflow-y-auto overscroll-contain lg:block">
+              <div className="rounded-lg border border-white/10 bg-shadow-900/90 px-2.5 py-2 sm:px-3 shadow-lg backdrop-blur-sm">
+                <RediLegendInner showMunicipalities={showMunicipalities} showParishes={showParishes} />
               </div>
             </div>
           </div>
@@ -1137,7 +1704,7 @@ export function VenezuelaMap({
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -20 }}
                   transition={{ duration: 0.2 }}
-                  className="absolute top-3 right-14 z-[1000] w-64 bg-shadow-900/95 backdrop-blur-md
+                  className="absolute z-[1000] w-[min(100%,18rem)] sm:w-64 max-lg:left-3 max-lg:right-3 max-lg:top-[8.25rem] max-lg:max-h-[min(38vh,15rem)] max-lg:overflow-y-auto lg:top-3 lg:right-14 lg:left-auto lg:max-h-none bg-shadow-900/95 backdrop-blur-md
                     rounded-lg overflow-hidden shadow-2xl border border-white/10"
                 >
                   <div className="p-2.5 border-b border-white/5">
@@ -1214,19 +1781,59 @@ export function VenezuelaMap({
             })()}
           </AnimatePresence>
 
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="absolute top-3 right-3 z-[1000] bg-shadow-900/90 border border-white/10 rounded p-1
-              text-gray-400 hover:text-white transition-colors"
-          >
-            {sidebarOpen ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
-          </button>
+          {!sidebarOpen && (
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              title="Abrir lista de territorios"
+              className="fixed z-[2100] flex items-center gap-2 rounded-xl border border-cyan-500/45 bg-shadow-900/95 px-3 py-2.5 shadow-xl backdrop-blur-sm transition-all hover:border-cyan-400/60 hover:bg-cyan-500/10
+                left-3 top-[5.25rem] sm:top-[5.5rem] sm:left-3
+                lg:left-auto lg:right-0 lg:top-1/2 lg:-translate-y-1/2 lg:rounded-l-xl lg:rounded-r-none lg:px-2 lg:py-5 lg:flex-col lg:gap-2.5"
+            >
+              <PanelRight className="h-5 w-5 flex-shrink-0 text-cyan-300" aria-hidden />
+              <span className="text-[11px] font-mono font-semibold text-cyan-100 lg:hidden">Territorios</span>
+              <span
+                className="hidden max-h-[9rem] text-[9px] font-mono font-semibold uppercase leading-tight tracking-wide text-cyan-200/90 lg:block"
+                style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+              >
+                Territorios
+              </span>
+            </button>
+          )}
         </div>
 
-        {/* Sidebar */}
         {sidebarOpen && (
-          <div className="w-[min(20rem,92vw)] xl:w-80 flex flex-col bg-shadow-800/80 border-l border-white/5 flex-shrink-0 min-h-0">
-            <div className="p-2 border-b border-white/5 flex-shrink-0 space-y-2">
+          <button
+            type="button"
+            aria-label="Cerrar lista de territorios"
+            className="fixed inset-0 z-[1998] bg-black/45 backdrop-blur-[1px] lg:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
+        {/* Sidebar: drawer en móvil, columna en desktop */}
+        {sidebarOpen && (
+          <div
+            className="fixed inset-y-0 right-0 z-[1999] w-[min(20rem,calc(100vw-0.5rem))] flex flex-col bg-shadow-800/98 border-l border-white/10 flex-shrink-0 min-h-0 shadow-2xl
+              lg:relative lg:inset-auto lg:z-auto lg:w-80 lg:max-w-[20rem] lg:shadow-none lg:bg-shadow-800/80 lg:border-white/5"
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-white/10 bg-shadow-900/50 px-2.5 py-2 flex-shrink-0">
+              <div className="flex min-w-0 items-center gap-2">
+                <Users className="h-4 w-4 flex-shrink-0 text-neon-blue" aria-hidden />
+                <span className="truncate text-xs font-bold text-white">Territorios</span>
+                <span className="hidden text-[9px] font-mono text-gray-500 sm:inline">({stateData.length})</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(false)}
+                className="flex-shrink-0 rounded-md border border-white/10 p-1.5 text-gray-400 transition-colors hover:border-white/20 hover:bg-white/5 hover:text-white"
+                title="Cerrar panel"
+                aria-label="Cerrar panel de territorios"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-2 border-b border-white/5 p-2 flex-shrink-0">
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
                 <input
@@ -1256,7 +1863,7 @@ export function VenezuelaMap({
               )}
             </div>
             <div className="px-2 py-1.5 border-b border-white/5 flex-shrink-0 flex items-center justify-between gap-2">
-              <span className="text-[10px] text-gray-500 font-mono">TERRITORIO ({stateData.length})</span>
+              <span className="text-[10px] text-gray-500 font-mono">Ordenar lista</span>
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as 'org_count' | 'person_count' | 'name')}

@@ -5,6 +5,8 @@ import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } from 're
 import L from 'leaflet'
 import { Search, MapPin, Crosshair, X, Loader2, Navigation } from 'lucide-react'
 
+import { reverseGeocodeNominatim } from '../utils/nominatim'
+
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
@@ -116,7 +118,12 @@ export function LocationPicker({
     try {
       const response = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`,
-        { headers: { 'Accept-Language': 'es' } }
+        {
+          headers: {
+            'Accept-Language': 'es',
+            'User-Agent': 'VenezuelaStrategicMap/1.0 (https://github.com)',
+          },
+        },
       )
       const data: NominatimResult[] = await response.json()
       setSearchResults(data)
@@ -142,21 +149,15 @@ export function LocationPicker({
   const reverseGeocode = useCallback(async (lat: number, lng: number): Promise<LocationData> => {
     setReverseGeocoding(true)
     try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1`,
-        { headers: { 'Accept-Language': 'es' } }
-      )
-      const data: NominatimResult = await response.json()
+      const d = await reverseGeocodeNominatim(lat, lng)
       return {
-        coordinates: { lat, lng },
-        address: data.address?.road
-          ? `${data.address.road}${data.address.house_number ? ' ' + data.address.house_number : ''}`
-          : undefined,
-        city: data.address?.city || data.address?.town || data.address?.village,
-        state: data.address?.state,
-        country: data.address?.country,
-        postalCode: data.address?.postcode,
-        displayName: data.display_name,
+        coordinates: { lat: d.lat, lng: d.lng },
+        address: d.street,
+        city: d.municipio,
+        state: d.estado,
+        country: d.pais,
+        postalCode: d.codigoPostal,
+        displayName: d.displayName,
       }
     } catch (error) {
       console.error('Error reverse geocoding:', error)
