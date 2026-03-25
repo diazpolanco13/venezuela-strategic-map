@@ -609,12 +609,19 @@ export function VenezuelaMap({
       .finally(() => setGeoLoading(false))
   }, [stateData.length, geo.states, geo.countryOutline])
 
+  const [muniIndexWanted, setMuniIndexWanted] = useState(false)
+  const wantMuniGeo = showMunicipalities || muniIndexWanted
+
   useEffect(() => {
-    if (muniGeo) return
+    if (showMunicipalities) setMuniIndexWanted(true)
+  }, [showMunicipalities])
+
+  useEffect(() => {
+    if (!wantMuniGeo || muniGeo) return
     fetchGeoJSON(geo.municipalities)
       .then(setMuniGeo)
       .catch(err => console.error('Error GeoJSON municipios:', err))
-  }, [muniGeo, geo.municipalities])
+  }, [wantMuniGeo, muniGeo, geo.municipalities])
 
   const wantParishGeo = showParishes || parishIndexWanted
 
@@ -634,7 +641,10 @@ export function VenezuelaMap({
   const territoryIndex = useMemo(() => buildTerritoryIndex(muniGeo, parishGeo), [muniGeo, parishGeo])
 
   useEffect(() => {
-    if (territorialSearchQuery.trim().length >= 2) setParishIndexWanted(true)
+    if (territorialSearchQuery.trim().length >= 2) {
+      setMuniIndexWanted(true)
+      setParishIndexWanted(true)
+    }
   }, [territorialSearchQuery])
 
   const searchHits = useMemo(
@@ -1258,6 +1268,7 @@ export function VenezuelaMap({
   }, [])
 
   const handleStateRowToggle = useCallback((state: StateData) => {
+    setMuniIndexWanted(true)
     setParishIndexWanted(true)
     setExpandedStateIds(prev => ({ ...prev, [state.id]: !prev[state.id] }))
     handleStateClick(state)
@@ -1265,6 +1276,7 @@ export function VenezuelaMap({
 
   const applySearchHit = useCallback(
     (hit: SearchHit) => {
+      setMuniIndexWanted(true)
       setParishIndexWanted(true)
       if (hit.kind === 'estado') {
         handleStateClick(hit.state)
@@ -3143,6 +3155,7 @@ export function VenezuelaMap({
                                           type="button"
                                           onClick={(e) => {
                                             e.stopPropagation()
+                                            setMuniIndexWanted(true)
                                             setParishIndexWanted(true)
                                             setExpandedMuniKeys(prev => ({ ...prev, [mk]: !prev[mk] }))
                                             handlePickMunicipioSidebar(state, m)
