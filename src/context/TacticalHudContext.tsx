@@ -6,8 +6,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type Dispatch,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MutableRefObject,
   type ReactNode,
+  type SetStateAction,
 } from 'react'
 
 export type TacticalCursor = { lat: number; lng: number }
@@ -20,6 +23,21 @@ export type TacticalHudValue = {
   uptime: string
   desktopSearchInputRef: MutableRefObject<HTMLInputElement | null>
   focusDesktopSearch: () => void
+  /** Búsqueda territorial (estado / municipio / parroquia), compartida con `VenezuelaMap`. */
+  territorialSearchQuery: string
+  setTerritorialSearchQuery: Dispatch<SetStateAction<string>>
+  mapSearchOpen: boolean
+  setMapSearchOpen: Dispatch<SetStateAction<boolean>>
+  searchHighlightIdx: number
+  setSearchHighlightIdx: Dispatch<SetStateAction<number>>
+  /** Nodo bajo el input del header (escritorio); el mapa hace portal del desplegable aquí. */
+  territorySearchDropdownHost: HTMLDivElement | null
+  setTerritorySearchDropdownHost: (el: HTMLDivElement | null) => void
+  /** Área clic del buscador en cabecera (cierra desplegable al clic fuera). */
+  headerTerritorySearchRef: MutableRefObject<HTMLDivElement | null>
+  mapSearchKeyDownHandlerRef: MutableRefObject<
+    ((e: ReactKeyboardEvent<HTMLInputElement>) => void) | null
+  >
 }
 
 const TacticalHudContext = createContext<TacticalHudValue | null>(null)
@@ -30,6 +48,17 @@ export function TacticalHudProvider({ children }: { children: ReactNode }) {
   const mountMs = useRef(Date.now())
   const [uptime, setUptime] = useState('00:00:00')
   const desktopSearchInputRef = useRef<HTMLInputElement | null>(null)
+
+  const [territorialSearchQuery, setTerritorialSearchQuery] = useState('')
+  const [mapSearchOpen, setMapSearchOpen] = useState(false)
+  const [searchHighlightIdx, setSearchHighlightIdx] = useState(0)
+  const [territorySearchDropdownHost, setTerritorySearchDropdownHost] = useState<HTMLDivElement | null>(
+    null,
+  )
+  const headerTerritorySearchRef = useRef<HTMLDivElement | null>(null)
+  const mapSearchKeyDownHandlerRef = useRef<
+    ((e: ReactKeyboardEvent<HTMLInputElement>) => void) | null
+  >(null)
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -57,8 +86,27 @@ export function TacticalHudProvider({ children }: { children: ReactNode }) {
       uptime,
       desktopSearchInputRef,
       focusDesktopSearch,
+      territorialSearchQuery,
+      setTerritorialSearchQuery,
+      mapSearchOpen,
+      setMapSearchOpen,
+      searchHighlightIdx,
+      setSearchHighlightIdx,
+      territorySearchDropdownHost,
+      setTerritorySearchDropdownHost,
+      headerTerritorySearchRef,
+      mapSearchKeyDownHandlerRef,
     }),
-    [cursor, mapCenter, uptime, focusDesktopSearch],
+    [
+      cursor,
+      mapCenter,
+      uptime,
+      focusDesktopSearch,
+      territorialSearchQuery,
+      mapSearchOpen,
+      searchHighlightIdx,
+      territorySearchDropdownHost,
+    ],
   )
 
   return <TacticalHudContext.Provider value={value}>{children}</TacticalHudContext.Provider>

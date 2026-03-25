@@ -4,6 +4,7 @@ import { LocationPicker, type LocationData } from './components/LocationPicker'
 import { SAMPLE_STATES } from './data/sampleStrategicMap'
 import { MapPin, X, Search, Bell, Settings, CircleUser } from 'lucide-react'
 import { TacticalHudProvider, useTacticalHud } from './context/TacticalHudContext'
+import { territorySearchQueryNorm } from './utils/territoryIndex'
 
 type AppHeaderProps = {
   showPicker: boolean
@@ -14,10 +15,12 @@ type AppHeaderProps = {
 
 function AppHeader({ showPicker, setShowPicker, pickerLocation, setPickerLocation }: AppHeaderProps) {
   const hud = useTacticalHud()
+  const searchNormLen = hud ? territorySearchQueryNorm(hud.territorialSearchQuery).length : 0
+  const showHeaderSearchDropdown = Boolean(hud?.mapSearchOpen && searchNormLen >= 2)
 
   return (
     <>
-      <header className="tactical-web-strip flex min-w-0 flex-shrink-0 flex-col backdrop-blur-md">
+      <header className="tactical-web-strip relative z-[1200] flex min-w-0 flex-shrink-0 flex-col backdrop-blur-md">
         {/* Móvil / tablet */}
         <div className="flex items-center justify-between gap-2 px-3 py-1.5 sm:px-4 sm:py-2 lg:hidden">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
@@ -82,17 +85,57 @@ function AppHeader({ showPicker, setShowPicker, pickerLocation, setPickerLocatio
           </div>
 
           <div className="flex min-w-0 items-center justify-center gap-2">
-            <button
-              type="button"
-              onClick={() => hud?.focusDesktopSearch()}
-              className="tactical-hud-glass flex max-w-md min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-2 text-left transition-colors hover:border-cyan-400/35 hover:bg-black/40"
-              title="Enfocar búsqueda en el mapa"
-            >
-              <Search className="h-3.5 w-3.5 flex-shrink-0 text-cyan-400/80" aria-hidden />
-              <span className="truncate font-mono text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                Buscar zonas operativas…
-              </span>
-            </button>
+            {hud && (
+              <div
+                ref={hud.headerTerritorySearchRef}
+                className="relative flex max-w-md min-w-0 flex-1 flex-col"
+              >
+                <div className="tactical-hud-glass flex min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 py-1 transition-colors focus-within:border-cyan-400/35 focus-within:bg-black/40">
+                  <Search className="pointer-events-none h-3 w-3 flex-shrink-0 text-cyan-400/80" aria-hidden />
+                  <input
+                    ref={hud.desktopSearchInputRef}
+                    type="text"
+                    value={hud.territorialSearchQuery}
+                    onChange={(e) => {
+                      hud.setTerritorialSearchQuery(e.target.value)
+                      hud.setMapSearchOpen(true)
+                    }}
+                    onFocus={() => hud.setMapSearchOpen(true)}
+                    onKeyDown={(e) => hud.mapSearchKeyDownHandlerRef.current?.(e)}
+                    placeholder="Buscar zonas operativas…"
+                    className="min-w-0 flex-1 border-0 bg-transparent font-mono text-[10px] uppercase tracking-[0.12em] text-cyan-100/90 outline-none placeholder:text-slate-500"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-autocomplete="list"
+                    aria-expanded={showHeaderSearchDropdown}
+                    aria-controls="territory-search-results"
+                  />
+                  {hud.territorialSearchQuery.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        hud.setTerritorialSearchQuery('')
+                        hud.setSearchHighlightIdx(0)
+                        hud.desktopSearchInputRef.current?.focus()
+                      }}
+                      className="flex-shrink-0 rounded p-0.5 text-slate-600 transition-colors hover:bg-white/10 hover:text-cyan-300"
+                      aria-label="Limpiar búsqueda"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+                <div
+                  ref={(el) => hud.setTerritorySearchDropdownHost(el)}
+                  className="absolute left-0 right-0 top-full z-[5000] pt-1.5"
+                />
+                {hud.mapSearchOpen && searchNormLen > 0 && searchNormLen < 2 && (
+                  <p className="absolute left-0 right-0 top-full pt-2 text-center font-mono text-[9px] text-slate-600">
+                    Mínimo 2 caracteres
+                  </p>
+                )}
+              </div>
+            )}
             <span className="tactical-hud-glass hidden items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-2 font-mono text-[8px] uppercase tracking-wider text-cyan-300 shadow-[0_0_14px_rgba(0,242,255,0.15)] sm:inline-flex">
               <span
                 className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(0,242,255,0.95)]"

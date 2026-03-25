@@ -1,7 +1,16 @@
 // Mapa Estratégico de Venezuela
 // Leaflet + GeoJSON: estados (ADM1) + municipios (ADM2) + parroquias (ADM3) + Guayana Esequiba
 
-import { useState, useEffect, useCallback, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   MapPin, Users, ChevronRight, ChevronLeft, ChevronDown,
@@ -477,9 +486,9 @@ export function VenezuelaMap({
     }
   }, [metricSortOptions, sortBy])
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [territorialSearchQuery, setTerritorialSearchQuery] = useState('')
-  const [mapSearchOpen, setMapSearchOpen] = useState(false)
-  const [searchHighlightIdx, setSearchHighlightIdx] = useState(0)
+  const [localTerritorialSearchQuery, setLocalTerritorialSearchQuery] = useState('')
+  const [localMapSearchOpen, setLocalMapSearchOpen] = useState(false)
+  const [localSearchHighlightIdx, setLocalSearchHighlightIdx] = useState(0)
   const mapSearchRef = useRef<HTMLDivElement>(null)
   const [expandedStateIds, setExpandedStateIds] = useState<Record<string, boolean>>({})
   const [expandedMuniKeys, setExpandedMuniKeys] = useState<Record<string, boolean>>({})
@@ -509,6 +518,13 @@ export function VenezuelaMap({
 
   const [flyTarget, setFlyTarget] = useState<MapFlyRequest | null>(null)
   const hud = useTacticalHud()
+
+  const territorialSearchQuery = hud?.territorialSearchQuery ?? localTerritorialSearchQuery
+  const setTerritorialSearchQuery = hud?.setTerritorialSearchQuery ?? setLocalTerritorialSearchQuery
+  const mapSearchOpen = hud?.mapSearchOpen ?? localMapSearchOpen
+  const setMapSearchOpen = hud?.setMapSearchOpen ?? setLocalMapSearchOpen
+  const searchHighlightIdx = hud?.searchHighlightIdx ?? localSearchHighlightIdx
+  const setSearchHighlightIdx = hud?.setSearchHighlightIdx ?? setLocalSearchHighlightIdx
 
   const flyOperationalHome = useCallback(() => {
     setFlyTarget({ kind: 'point', center: [7.5, -66.58], zoom: 5.5, duration: 1.25 })
@@ -656,9 +672,11 @@ export function VenezuelaMap({
     setSearchHighlightIdx(0)
   }, [territorialSearchQuery, searchHits.length])
 
+  const headerTerritorySearchRefBox = hud?.headerTerritorySearchRef
   useEffect(() => {
     const close = (e: MouseEvent) => {
       const t = e.target as Node
+      if (headerTerritorySearchRefBox?.current?.contains(t)) return
       if (mapSearchRef.current?.contains(t)) return
       if (mobileMapSearchRef.current?.contains(t)) return
       setMapSearchOpen(false)
@@ -666,7 +684,7 @@ export function VenezuelaMap({
     }
     document.addEventListener('mousedown', close)
     return () => document.removeEventListener('mousedown', close)
-  }, [])
+  }, [headerTerritorySearchRefBox, setMapSearchOpen, setMobileSearchExpanded])
 
   useEffect(() => {
     if (!showMunicipalities) setSelectedMunicipality(null)
@@ -1539,6 +1557,15 @@ export function VenezuelaMap({
     [searchNormLen, searchHits, searchHighlightIdx, applySearchHit],
   )
 
+  const mapSearchKeyDownHandlerRefBox = hud?.mapSearchKeyDownHandlerRef
+  useLayoutEffect(() => {
+    if (!mapSearchKeyDownHandlerRefBox) return
+    mapSearchKeyDownHandlerRefBox.current = onMapSearchKeyDown
+    return () => {
+      mapSearchKeyDownHandlerRefBox.current = null
+    }
+  }, [mapSearchKeyDownHandlerRefBox, onMapSearchKeyDown])
+
   const groupedByRedi = useMemo(() => {
     const groups: Record<string, StateData[]> = {}
 
@@ -1899,122 +1926,194 @@ export function VenezuelaMap({
               </div>
             </div>
           )}
-          {/* Búsqueda territorial flotante — solo escritorio */}
-          {showMapSearch && (
-          <div
-            ref={mapSearchRef}
-            className="pointer-events-none absolute top-2 z-[1100] hidden w-[min(calc(100%-2.5rem),26rem)] sm:top-3 lg:left-1/2 lg:block lg:-translate-x-1/2"
-          >
-            <div className="pointer-events-auto">
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.45)]" />
-                <input
-                  ref={el => {
-                    if (hud) hud.desktopSearchInputRef.current = el
-                  }}
-                  type="search"
-                  value={territorialSearchQuery}
-                  onChange={(e) => {
-                    setTerritorialSearchQuery(e.target.value)
-                    setMapSearchOpen(true)
-                  }}
-                  onFocus={() => setMapSearchOpen(true)}
-                  onKeyDown={onMapSearchKeyDown}
-                  placeholder="Buscar municipio, parroquia o estado…"
-                  className="input-territory-search w-full rounded-xl border border-cyan-500/25 py-2 pl-9 pr-9 font-mono text-[11px] font-medium sm:py-2.5 sm:pl-10 sm:pr-10 sm:text-[12px] shadow-[0_8px_36px_rgba(0,0,0,0.55),0_0_24px_rgba(34,211,238,0.04)] backdrop-blur-md focus:border-cyan-400/50 focus:outline-none focus:ring-2 focus:ring-cyan-500/25"
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-autocomplete="list"
-                  aria-expanded={showMapSearchDropdown}
-                  aria-controls="territory-search-results"
-                />
-                {territorialSearchQuery.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTerritorialSearchQuery('')
-                      setSearchHighlightIdx(0)
-                    }}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-gray-500 hover:text-white hover:bg-white/10 transition-colors"
-                    aria-label="Limpiar búsqueda"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-                {showMapSearchDropdown && (
-                  <div
-                    id="territory-search-results"
-                    role="listbox"
-                    className="absolute left-0 right-0 top-[calc(100%+6px)] max-h-[min(18rem,40vh)] overflow-y-auto rounded-xl border border-cyan-500/20 bg-[rgba(6,10,14,0.97)] shadow-[0_16px_48px_rgba(0,0,0,0.6),0_0_1px_rgba(34,211,238,0.12)] ring-1 ring-cyan-500/10 backdrop-blur-xl"
-                  >
-                    {searchHits.length === 0 ? (
-                      <div className="px-4 py-5 text-center text-xs text-gray-500 font-mono">
-                        Sin coincidencias · prueba otro término
+          {/* Desplegable de búsqueda territorial en cabecera (portal) o barra flotante si no hay TacticalHud */}
+          {showMapSearch &&
+            hud?.territorySearchDropdownHost != null &&
+            createPortal(
+              showMapSearchDropdown ? (
+                <div
+                  id="territory-search-results"
+                  role="listbox"
+                  className="max-h-[min(16rem,40vh)] overflow-y-auto rounded-lg border border-cyan-500/15 bg-[rgba(5,7,11,0.96)] shadow-[0_12px_40px_rgba(0,0,0,0.7)] backdrop-blur-xl"
+                >
+                  {searchHits.length === 0 ? (
+                    <div className="px-4 py-4 text-center font-mono text-[10px] text-slate-600">
+                      Sin coincidencias · prueba otro término
+                    </div>
+                  ) : (
+                    <>
+                      <div className="sticky top-0 z-10 border-b border-cyan-500/10 bg-[rgba(5,7,11,0.98)] px-2.5 py-1 font-mono text-[8px] uppercase tracking-wider text-slate-600">
+                        {searchHits.length} resultado{searchHits.length === 1 ? '' : 's'} · ↑↓ · Enter
                       </div>
-                    ) : (
-                      <>
-                        <div className="sticky top-0 z-10 px-3 py-1.5 border-b border-white/8 bg-shadow-900/98 text-[9px] font-mono text-gray-500 uppercase tracking-wider">
-                          {searchHits.length} resultado{searchHits.length === 1 ? '' : 's'} · ↑↓ navegar · Enter seleccionar
-                        </div>
-                        {searchHits.map((hit, idx) => {
-                          const active = idx === searchHighlightIdx
-                          const badge = hit.kind === 'estado' ? 'Estado' : hit.kind === 'municipio' ? 'Municipio' : 'Parroquia'
-                          const Icon = hit.kind === 'estado' ? MapPin : hit.kind === 'municipio' ? Layers : LayoutGrid
-                          const title =
-                            hit.kind === 'estado'
+                      {searchHits.map((hit, idx) => {
+                        const active = idx === searchHighlightIdx
+                        const badge = hit.kind === 'estado' ? 'Estado' : hit.kind === 'municipio' ? 'Municipio' : 'Parroquia'
+                        const Icon = hit.kind === 'estado' ? MapPin : hit.kind === 'municipio' ? Layers : LayoutGrid
+                        const title =
+                          hit.kind === 'estado'
+                            ? hit.state.name
+                            : hit.kind === 'municipio'
+                              ? hit.municipio.display
+                              : hit.parish.display
+                        const sub =
+                          hit.kind === 'estado'
+                            ? getStateRedi(hit.state.name) || '—'
+                            : hit.kind === 'municipio'
                               ? hit.state.name
-                              : hit.kind === 'municipio'
-                                ? hit.municipio.display
-                                : hit.parish.display
-                          const sub =
-                            hit.kind === 'estado'
-                              ? getStateRedi(hit.state.name) || '—'
-                              : hit.kind === 'municipio'
-                                ? hit.state.name
-                                : `${hit.municipio.display} · ${hit.state.name}`
-                          const key =
-                            hit.kind === 'estado'
-                              ? `me-${hit.state.id}-${idx}`
-                              : hit.kind === 'municipio'
-                                ? `mm-${hit.state.id}-${hit.municipio.norm}-${idx}`
-                                : `mp-${hit.parish.pcode}-${idx}`
-                          return (
-                            <button
-                              key={key}
-                              type="button"
-                              role="option"
-                              aria-selected={active}
-                              onMouseEnter={() => setSearchHighlightIdx(idx)}
-                              onClick={() => applySearchHit(hit)}
-                              className={`w-full text-left px-3 py-2.5 border-b border-white/[0.06] flex items-start gap-2.5 transition-colors
-                                ${active ? 'bg-neon-blue/14 border-l-2 border-l-neon-blue pl-[10px]' : 'hover:bg-white/[0.05] border-l-2 border-l-transparent'}`}
-                            >
-                              <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${active ? 'text-neon-blue' : 'text-gray-500'}`} />
-                              <div className="min-w-0 flex-1">
+                              : `${hit.municipio.display} · ${hit.state.name}`
+                        const key =
+                          hit.kind === 'estado'
+                            ? `me-${hit.state.id}-${idx}`
+                            : hit.kind === 'municipio'
+                              ? `mm-${hit.state.id}-${hit.municipio.norm}-${idx}`
+                              : `mp-${hit.parish.pcode}-${idx}`
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            role="option"
+                            aria-selected={active}
+                            onMouseEnter={() => setSearchHighlightIdx(idx)}
+                            onClick={() => applySearchHit(hit)}
+                            className={`flex w-full items-center gap-2.5 border-b border-white/[0.04] px-3 py-2 text-left transition-colors
+                              ${active ? 'border-l-2 border-l-cyan-400 bg-cyan-500/[0.08] pl-[10px]' : 'border-l-2 border-l-transparent hover:bg-white/[0.04]'}`}
+                          >
+                            <Icon className={`h-4 w-4 flex-shrink-0 ${active ? 'text-cyan-400' : 'text-slate-600'}`} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className={`truncate text-[12px] font-medium leading-snug ${active ? 'text-white' : 'text-gray-200'}`}>
+                                  {title}
+                                </span>
                                 <span
-                                  className={`inline-block text-[8px] font-mono uppercase tracking-wide px-1.5 py-px rounded border mb-0.5
-                                    ${hit.kind === 'parroquia' ? 'border-cyan-500/35 text-cyan-400/90' : hit.kind === 'municipio' ? 'border-purple-500/35 text-purple-300/90' : 'border-white/20 text-gray-400'}`}
+                                  className={`flex-shrink-0 rounded border px-1.5 py-px font-mono text-[7px] uppercase tracking-wide
+                                    ${hit.kind === 'parroquia' ? 'border-cyan-500/30 text-cyan-400/80' : hit.kind === 'municipio' ? 'border-purple-500/30 text-purple-300/80' : 'border-white/15 text-slate-500'}`}
                                 >
                                   {badge}
                                 </span>
-                                <div className={`text-[13px] font-medium leading-snug truncate ${active ? 'text-white' : 'text-gray-200'}`}>
-                                  {title}
-                                </div>
-                                <div className="text-[10px] text-gray-500 font-mono truncate mt-0.5">{sub}</div>
                               </div>
-                            </button>
-                          )
-                        })}
-                      </>
-                    )}
-                  </div>
-                )}
-                {mapSearchOpen && searchNormLen > 0 && searchNormLen < 2 && (
-                  <p className="mt-2 text-center text-[10px] text-gray-500 font-mono">Mínimo 2 caracteres para buscar</p>
-                )}
+                              <div className="truncate font-mono text-[9px] text-slate-600">{sub}</div>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </>
+                  )}
+                </div>
+              ) : null,
+              hud.territorySearchDropdownHost,
+            )}
+          {showMapSearch && !hud && (
+            <div
+              ref={mapSearchRef}
+              className="pointer-events-none absolute top-2 z-[1100] hidden w-[min(calc(100%-2.5rem),26rem)] sm:top-3 lg:left-1/2 lg:block lg:-translate-x-1/2"
+            >
+              <div className="pointer-events-auto">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.45)]" />
+                  <input
+                    type="search"
+                    value={territorialSearchQuery}
+                    onChange={(e) => {
+                      setTerritorialSearchQuery(e.target.value)
+                      setMapSearchOpen(true)
+                    }}
+                    onFocus={() => setMapSearchOpen(true)}
+                    onKeyDown={onMapSearchKeyDown}
+                    placeholder="Buscar municipio, parroquia o estado…"
+                    className="input-territory-search w-full rounded-xl border border-cyan-500/25 py-2 pl-9 pr-9 font-mono text-[11px] font-medium shadow-[0_8px_36px_rgba(0,0,0,0.55),0_0_24px_rgba(34,211,238,0.04)] backdrop-blur-md focus:border-cyan-400/50 focus:outline-none focus:ring-2 focus:ring-cyan-500/25 sm:py-2.5 sm:pl-10 sm:pr-10 sm:text-[12px]"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-autocomplete="list"
+                    aria-expanded={showMapSearchDropdown}
+                    aria-controls="territory-search-results-embed"
+                  />
+                  {territorialSearchQuery.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTerritorialSearchQuery('')
+                        setSearchHighlightIdx(0)
+                      }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-gray-500 transition-colors hover:bg-white/10 hover:text-white"
+                      aria-label="Limpiar búsqueda"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                  {showMapSearchDropdown && (
+                    <div
+                      id="territory-search-results-embed"
+                      role="listbox"
+                      className="absolute left-0 right-0 top-[calc(100%+6px)] max-h-[min(18rem,40vh)] overflow-y-auto rounded-xl border border-cyan-500/20 bg-[rgba(6,10,14,0.97)] shadow-[0_16px_48px_rgba(0,0,0,0.6),0_0_1px_rgba(34,211,238,0.12)] ring-1 ring-cyan-500/10 backdrop-blur-xl"
+                    >
+                      {searchHits.length === 0 ? (
+                        <div className="px-4 py-5 text-center font-mono text-xs text-gray-500">
+                          Sin coincidencias · prueba otro término
+                        </div>
+                      ) : (
+                        <>
+                          <div className="sticky top-0 z-10 border-b border-white/8 bg-shadow-900/98 px-3 py-1.5 font-mono text-[9px] uppercase tracking-wider text-gray-500">
+                            {searchHits.length} resultado{searchHits.length === 1 ? '' : 's'} · ↑↓ navegar · Enter seleccionar
+                          </div>
+                          {searchHits.map((hit, idx) => {
+                            const active = idx === searchHighlightIdx
+                            const badge = hit.kind === 'estado' ? 'Estado' : hit.kind === 'municipio' ? 'Municipio' : 'Parroquia'
+                            const Icon = hit.kind === 'estado' ? MapPin : hit.kind === 'municipio' ? Layers : LayoutGrid
+                            const title =
+                              hit.kind === 'estado'
+                                ? hit.state.name
+                                : hit.kind === 'municipio'
+                                  ? hit.municipio.display
+                                  : hit.parish.display
+                            const sub =
+                              hit.kind === 'estado'
+                                ? getStateRedi(hit.state.name) || '—'
+                                : hit.kind === 'municipio'
+                                  ? hit.state.name
+                                  : `${hit.municipio.display} · ${hit.state.name}`
+                            const key =
+                              hit.kind === 'estado'
+                                ? `me-${hit.state.id}-${idx}`
+                                : hit.kind === 'municipio'
+                                  ? `mm-${hit.state.id}-${hit.municipio.norm}-${idx}`
+                                  : `mp-${hit.parish.pcode}-${idx}`
+                            return (
+                              <button
+                                key={key}
+                                type="button"
+                                role="option"
+                                aria-selected={active}
+                                onMouseEnter={() => setSearchHighlightIdx(idx)}
+                                onClick={() => applySearchHit(hit)}
+                                className={`flex w-full items-start gap-2.5 border-b border-white/[0.06] px-3 py-2.5 text-left transition-colors
+                                  ${active ? 'border-l-2 border-l-neon-blue bg-neon-blue/14 pl-[10px]' : 'border-l-2 border-l-transparent hover:bg-white/[0.05]'}`}
+                              >
+                                <Icon className={`mt-0.5 h-4 w-4 flex-shrink-0 ${active ? 'text-neon-blue' : 'text-gray-500'}`} />
+                                <div className="min-w-0 flex-1">
+                                  <span
+                                    className={`mb-0.5 inline-block rounded border px-1.5 py-px font-mono text-[8px] uppercase tracking-wide
+                                      ${hit.kind === 'parroquia' ? 'border-cyan-500/35 text-cyan-400/90' : hit.kind === 'municipio' ? 'border-purple-500/35 text-purple-300/90' : 'border-white/20 text-gray-400'}`}
+                                  >
+                                    {badge}
+                                  </span>
+                                  <div className={`truncate text-[13px] font-medium leading-snug ${active ? 'text-white' : 'text-gray-200'}`}>
+                                    {title}
+                                  </div>
+                                  <div className="mt-0.5 truncate font-mono text-[10px] text-gray-500">{sub}</div>
+                                </div>
+                              </button>
+                            )
+                          })}
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {mapSearchOpen && searchNormLen > 0 && searchNormLen < 2 && (
+                    <p className="mt-2 text-center font-mono text-[10px] text-gray-500">Mínimo 2 caracteres para buscar</p>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
           )}
           </div>
           <style>{`

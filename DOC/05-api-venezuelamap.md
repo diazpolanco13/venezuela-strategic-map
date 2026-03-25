@@ -49,7 +49,7 @@ Los tooltips y paneles leen `metrics` de forma genérica (etiqueta + valor). No 
 |-------|--------|
 | `showSummaryToolbar` | Muestra la fila de métricas globales si `summaryMetrics` tiene entradas. |
 | `showTerritoryPanel` | Panel lateral “Territorios” (árbol / REDI). |
-| `showMapSearch` | Búsqueda flotante sobre el mapa. |
+| `showMapSearch` | Búsqueda territorial (estado / municipio / parroquia). Con `TacticalHudProvider` (p. ej. `App.tsx`), en escritorio el campo vive en la cabecera y el desplegable se ancla ahí por portal; en &lt;lg sigue el acceso compacto en `VenezuelaMap`. Sin provider, se usa la barra flotante centrada sobre el mapa (solo escritorio). |
 | `showGeolocation` | Botón de ubicación, marcador, tarjeta con reverse geocoding. |
 
 Si un campo se omite, el componente aplica **comportamiento por defecto** (en la implementación actual, la mayoría de bloques están visibles salvo que se desactiven explícitamente según el código de `VenezuelaMap.tsx`).
