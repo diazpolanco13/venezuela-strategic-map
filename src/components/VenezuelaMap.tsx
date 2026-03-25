@@ -28,7 +28,8 @@ import 'leaflet/dist/leaflet.css'
 import { DEFAULT_VENEZUELA_GEO_URLS } from '../config/mapAssets'
 import { REDI_COLORS, REDI_ORDER, getStateRedi, normalizeName } from '../config/redi'
 import { ESEQUIBO_GEOJSON } from '../config/esequibo'
-import type { StateData, MapMarker, VenezuelaMapProps } from '../config/types'
+import type { StateData, MapMarker, VenezuelaMapProps, HeatmapPoint } from '../config/types'
+import { LeafletHeatmap } from './LeafletHeatmap'
 import type { ReverseGeoDetail } from '../utils/nominatim'
 import {
   formatDeviceCaptureDateTime,
@@ -142,12 +143,12 @@ function MapInvalidateWhenSidebarChanges({ sidebarOpen }: { sidebarOpen: boolean
 function MapLayerPanes({ zByPane }: { zByPane: Record<string, string> }) {
   const map = useMap()
   useEffect(() => {
-    const names = ['venCountry', 'venStates', 'venEsequibo', 'venMuni', 'venParish', 'venRedi'] as const
+    const names = ['venCountry', 'venStates', 'venEsequibo', 'venMuni', 'venParish', 'venRedi', 'venHeatmap'] as const
     for (const name of names) {
       const el = map.getPane(name) ?? map.createPane(name)
       const z = zByPane[name]
       if (z != null) el.style.zIndex = z
-      if (name === 'venCountry') el.style.pointerEvents = 'none'
+      if (name === 'venCountry' || name === 'venHeatmap') el.style.pointerEvents = 'none'
       else el.style.pointerEvents = ''
     }
   }, [map, zByPane])
@@ -413,6 +414,9 @@ export function VenezuelaMap({
   showRediLayerDefault = false,
   showMunicipalitiesDefault = false,
   showMarkersDefault = true,
+  heatmapData,
+  heatmapOptions,
+  showHeatmapDefault,
   className = '',
   mapTitle = 'TERRITORIO VENEZUELA',
   mapSubtitle = 'Mapa estratégico',
@@ -511,6 +515,12 @@ export function VenezuelaMap({
   const [showRediLayer, setShowRediLayer] = useState(showRediLayerDefault)
   const [showMunicipalities, setShowMunicipalities] = useState(showMunicipalitiesDefault)
   const [showParishes, setShowParishes] = useState(false)
+  const hasHeatmap = Boolean(heatmapData && heatmapData.length > 0)
+  const [showHeatmap, setShowHeatmap] = useState(showHeatmapDefault ?? true)
+
+  useEffect(() => {
+    if (hasHeatmap && showHeatmapDefault === undefined) setShowHeatmap(true)
+  }, [hasHeatmap, showHeatmapDefault])
   const [layerOrder, setLayerOrder] = useState<StackableMapLayerId[]>(() => [...DEFAULT_MAP_LAYER_ORDER])
   const [layersPanelOpen, setLayersPanelOpen] = useState(false)
   const [parishGeo, setParishGeo] = useState<any>(null)
@@ -582,8 +592,9 @@ export function VenezuelaMap({
       municipalities: showMunicipalities,
       parishes: showParishes,
       redi: showRediLayer,
+      heatmap: showHeatmap,
     }),
-    [showCountrySilhouette, showStatesLayer, showMunicipalities, showParishes, showRediLayer],
+    [showCountrySilhouette, showStatesLayer, showMunicipalities, showParishes, showRediLayer, showHeatmap],
   )
 
   const onLayerVisibilityChange = useCallback((key: keyof MapLayerVisibility, visible: boolean) => {
@@ -602,6 +613,9 @@ export function VenezuelaMap({
         break
       case 'redi':
         setShowRediLayer(visible)
+        break
+      case 'heatmap':
+        setShowHeatmap(visible)
         break
     }
   }, [])
@@ -2479,6 +2493,13 @@ export function VenezuelaMap({
                   </Marker>
                 )
               })}
+
+              {showHeatmap && hasHeatmap && (
+                <LeafletHeatmap
+                  points={heatmapData!}
+                  options={heatmapOptions}
+                />
+              )}
 
               {showGeolocation && myLocation && userLocationIcon && (
                 <Marker position={[myLocation.lat, myLocation.lng]} icon={userLocationIcon} />

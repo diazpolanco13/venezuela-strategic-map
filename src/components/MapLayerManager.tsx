@@ -14,6 +14,7 @@ export type MapLayerVisibility = {
   municipalities: boolean
   parishes: boolean
   redi: boolean
+  heatmap: boolean
 }
 
 type MapLayerManagerProps = {
@@ -104,6 +105,7 @@ export function MapLayerManager({
     municipalities: 'municipalities',
     parishes: 'parishes',
     redi: 'redi',
+    heatmap: 'heatmap',
   }
 
   return (

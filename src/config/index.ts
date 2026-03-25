@@ -6,6 +6,8 @@ export type {
   StateData,
   MapMarker,
   TerritoryMetric,
+  HeatmapPoint,
+  HeatmapOptions,
   VenezuelaMapProps,
   VenezuelaMapUiOptions,
 } from './types'

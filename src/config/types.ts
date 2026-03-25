@@ -38,6 +38,28 @@ export interface MapMarker {
   address?: string
 }
 
+/** Punto de calor: tupla o objeto con label para mostrar valor sobre el mapa. */
+export type HeatmapPoint =
+  | [number, number]
+  | [number, number, number]
+  | { lat: number; lng: number; intensity: number; label?: string }
+
+/** Opciones visuales del heatmap (pasadas a leaflet.heat). */
+export interface HeatmapOptions {
+  /** Radio de cada punto en píxeles. Por defecto: 30. */
+  radius?: number
+  /** Radio de difuminado en píxeles. Por defecto: 20. */
+  blur?: number
+  /** Valor máximo de intensidad (normaliza la escala). Por defecto: 1.0. */
+  max?: number
+  /** Opacidad mínima del gradiente. Por defecto: 0.15. */
+  minOpacity?: number
+  /** Zoom máximo donde los puntos alcanzan intensidad máxima. Por defecto: 12. */
+  maxZoom?: number
+  /** Gradiente de colores personalizado. Clave: 0–1, valor: color CSS. */
+  gradient?: Record<number, string>
+}
+
 /** Enciende o apaga bloques de UI sin tocar el código del mapa. */
 export interface VenezuelaMapUiOptions {
   /** Fila de KPIs globales (solo si `summaryMetrics` tiene entradas). */
@@ -65,6 +87,12 @@ export interface VenezuelaMapProps {
   showRediLayerDefault?: boolean
   showMunicipalitiesDefault?: boolean
   showMarkersDefault?: boolean
+  /** Puntos de calor. Cada punto: [lat, lng] o [lat, lng, intensidad]. */
+  heatmapData?: HeatmapPoint[]
+  /** Opciones visuales del heatmap (radio, blur, gradiente, etc.). */
+  heatmapOptions?: HeatmapOptions
+  /** Mostrar capa de calor al iniciar. Por defecto: true si hay `heatmapData`. */
+  showHeatmapDefault?: boolean
   className?: string
   /** Título de la barra encima del mapa. */
   mapTitle?: string

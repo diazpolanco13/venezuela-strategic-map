@@ -3,7 +3,7 @@
  * Métricas de negocio: añade `metrics: [{ id, label, value }]` por estado y/o
  * `summaryMetrics` en `<VenezuelaMap />` cuando vengan de tu API.
  */
-import type { StateData } from '../config/types'
+import type { StateData, HeatmapPoint } from '../config/types'
 
 export const SAMPLE_STATES: StateData[] = [
   { id: '1', name: 'Distrito Capital', capital: 'Caracas', population: 2082000, geo_center: { lat: 10.4806, lng: -66.9036 } },
@@ -31,4 +31,42 @@ export const SAMPLE_STATES: StateData[] = [
   { id: '23', name: 'Delta Amacuro', capital: 'Tucupita', population: 187000, geo_center: { lat: 9.0583, lng: -62.0500 } },
   { id: '24', name: 'Nueva Esparta', capital: 'La Asunción', population: 491000, geo_center: { lat: 11.0000, lng: -63.9167 } },
   { id: '25', name: 'Guayana Esequiba', capital: '', region: 'REDI GUAYANA', geo_center: { lat: 5.5, lng: -59.2 } },
+]
+
+/**
+ * Demo heatmap: Corte II 11:15 — Concentración y Marcha de Gremios 25MAR26.
+ * Intensidad = participantes / max (775). Label = participantes reales.
+ * En producción estos datos vienen de la BD.
+ */
+export const SAMPLE_HEATMAP_DATA: HeatmapPoint[] = [
+  // REDI CAPITAL — Total: 180
+  { lat: 10.4806, lng: -66.9036, intensity: 0.85, label: '180' },   // Distrito Capital
+  // REDI CENTRAL — Total: 50
+  { lat: 10.2477, lng: -67.5972, intensity: 0.10, label: '15' },    // Aragua
+  { lat: 10.1810, lng: -67.9960, intensity: 0.15, label: '35' },    // Carabobo
+  // REDI OCCIDENTAL — Total: 300
+  { lat: 11.4000, lng: -69.6700, intensity: 0.50, label: '120' },   // Falcón
+  { lat: 10.0678, lng: -69.3467, intensity: 0.40, label: '100' },   // Lara
+  { lat: 10.6544, lng: -71.6281, intensity: 0.35, label: '80' },    // Zulia
+  // REDI ANDINA — Total: 130
+  { lat: 9.3700, lng: -70.4350, intensity: 0.20, label: '40' },     // Trujillo
+  { lat: 8.5896, lng: -71.1558, intensity: 0.15, label: '30' },     // Mérida
+  { lat: 7.7667, lng: -72.2333, intensity: 0.30, label: '60' },     // Táchira
+  // REDI LOS LLANOS — Total: 875
+  { lat: 8.6232, lng: -70.2372, intensity: 0.50, label: '120' },    // Barinas
+  { lat: 9.6592, lng: -68.5820, intensity: 0.25, label: '50' },     // Cojedes
+  { lat: 9.0439, lng: -69.7422, intensity: 1.0, label: '580' },     // Portuguesa
+  { lat: 8.7500, lng: -67.4500, intensity: 0.30, label: '75' },     // Guárico
+  { lat: 7.8830, lng: -69.6000, intensity: 0.25, label: '50' },     // Apure
+  // REDI ORIENTAL — Total: 248
+  { lat: 9.7457, lng: -63.1830, intensity: 0.30, label: '70' },     // Monagas
+  { lat: 10.1311, lng: -64.6861, intensity: 0.40, label: '98' },    // Anzoátegui
+  { lat: 10.4597, lng: -64.1768, intensity: 0.35, label: '80' },    // Sucre
+  // REDI INSULAR — Total: 60
+  { lat: 11.0167, lng: -63.8636, intensity: 0.30, label: '60' },    // Nueva Esparta
+  // REDI GUAYANA — Total: 890
+  { lat: 5.6639, lng: -67.6256, intensity: 0.40, label: '90' },     // Amazonas
+  { lat: 8.1167, lng: -63.5414, intensity: 0.90, label: '775' },    // Bolívar — Cd. Bolívar
+  { lat: 8.2833, lng: -62.7333, intensity: 0.85 },                  // Bolívar — Pto Ordaz (sin label, mismo estado)
+  { lat: 9.0583, lng: -62.0500, intensity: 0.12, label: '25' },     // Delta Amacuro
 ]

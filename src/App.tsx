@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { VenezuelaMap } from './components/VenezuelaMap'
 import { LocationPicker, type LocationData } from './components/LocationPicker'
-import { SAMPLE_STATES } from './data/sampleStrategicMap'
+import { SAMPLE_STATES, SAMPLE_HEATMAP_DATA } from './data/sampleStrategicMap'
 import { MapPin, X, Search, Bell, Settings, CircleUser } from 'lucide-react'
 import { TacticalHudProvider, useTacticalHud } from './context/TacticalHudContext'
 import { territorySearchQueryNorm } from './utils/territoryIndex'
@@ -191,6 +191,7 @@ function AppHeader({ showPicker, setShowPicker, pickerLocation, setPickerLocatio
           <VenezuelaMap
             stateData={SAMPLE_STATES}
             onStateClick={(state) => console.log('State clicked:', state.name)}
+            heatmapData={SAMPLE_HEATMAP_DATA}
           />
         </div>
 

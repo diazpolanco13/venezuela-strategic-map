@@ -1,6 +1,6 @@
 // Orden de apilamiento de capas Leaflet (pane + z-index).
 
-export type StackableMapLayerId = 'country' | 'states' | 'municipalities' | 'parishes' | 'redi'
+export type StackableMapLayerId = 'country' | 'states' | 'municipalities' | 'parishes' | 'redi' | 'heatmap'
 
 /** Orden por defecto: abajo → arriba (mayor z = más visible encima). */
 export const DEFAULT_MAP_LAYER_ORDER: StackableMapLayerId[] = [
@@ -9,6 +9,7 @@ export const DEFAULT_MAP_LAYER_ORDER: StackableMapLayerId[] = [
   'municipalities',
   'parishes',
   'redi',
+  'heatmap',
 ]
 
 export const MAP_LAYER_LABELS: Record<StackableMapLayerId, string> = {
@@ -17,6 +18,7 @@ export const MAP_LAYER_LABELS: Record<StackableMapLayerId, string> = {
   municipalities: 'Municipios',
   parishes: 'Parroquias',
   redi: 'REDI',
+  heatmap: 'Mapa de calor',
 }
 
 const PANE_BY_ID: Record<Exclude<StackableMapLayerId, 'states'>, string> = {
@@ -24,6 +26,7 @@ const PANE_BY_ID: Record<Exclude<StackableMapLayerId, 'states'>, string> = {
   municipalities: 'venMuni',
   parishes: 'venParish',
   redi: 'venRedi',
+  heatmap: 'venHeatmap',
 }
 
 /** Genera z-index por pane. Guayana Esequiba queda siempre justo encima de Estados. */
