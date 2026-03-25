@@ -1010,8 +1010,10 @@ export function VenezuelaMap({
     const gid = String(p.GID_2 ?? '')
     const muniDisplay = formatMunicipalityName(p.NAME_2 || '')
     const stateDisplay = formatMunicipalityName(p.NAME_1 || '')
-    const permanent = mapZoom >= 10
 
+    ;(layer as any)._muniMeta = { muniDisplay, stateDisplay }
+
+    const permanent = mapZoomRef.current >= 10
     const tipHtml = permanent
       ? `<span class="muni-perm-inner">${escapeHtml(muniDisplay)}</span>`
       : `<div class="muni-hover-inner">
@@ -1028,7 +1030,8 @@ export function VenezuelaMap({
     })
 
     layer.on('mouseover', () => {
-      if (!permanent) {
+      const perm = mapZoomRef.current >= 10
+      if (!perm) {
         const prev = municipalityHoverTooltipLayerRef.current
         if (prev && prev !== layer) prev.closeTooltip()
         municipalityHoverTooltipLayerRef.current = layer
@@ -1044,7 +1047,8 @@ export function VenezuelaMap({
       ;(layer as L.Path).bringToFront()
     })
     layer.on('mouseout', () => {
-      if (!permanent) {
+      const perm = mapZoomRef.current >= 10
+      if (!perm) {
         if (municipalityHoverTooltipLayerRef.current === layer) {
           municipalityHoverTooltipLayerRef.current = null
         }
@@ -1058,7 +1062,7 @@ export function VenezuelaMap({
       setSelectedState(null)
       setSelectedMunicipality({ gid, municipality: muniDisplay, state: stateDisplay })
     })
-  }, [mapZoom])
+  }, [])
 
   const getParishStyle = useCallback((feature: any) => {
     const pcode = String(feature?.properties?.adm3_pcode ?? '')
@@ -1086,14 +1090,22 @@ export function VenezuelaMap({
   const getParishStyleRef = useRef(getParishStyle)
   getParishStyleRef.current = getParishStyle
 
+  const mapZoomRef = useRef(mapZoom)
+  mapZoomRef.current = mapZoom
+
+  const parishGeoLayerRef = useRef<L.GeoJSON | null>(null)
+  const muniGeoLayerRef = useRef<L.GeoJSON | null>(null)
+
   const onEachParish = useCallback((feature: any, layer: Layer) => {
     const p = feature?.properties || {}
     const pcode = String(p.adm3_pcode ?? '')
     const parishDisplay = formatMunicipalityName(String(p.adm3_name || p.adm3_ref_name || ''))
     const muniDisplay = formatMunicipalityName(String(p.adm2_name || ''))
     const stateDisplay = formatMunicipalityName(String(p.adm1_name || ''))
-    const permanent = mapZoom >= 11
 
+    ;(layer as any)._parishMeta = { parishDisplay, muniDisplay, stateDisplay }
+
+    const permanent = mapZoomRef.current >= 11
     const tipHtml = permanent
       ? `<span class="parish-perm-inner">${escapeHtml(parishDisplay)}</span>`
       : `<div class="parish-hover-inner">
@@ -1110,7 +1122,8 @@ export function VenezuelaMap({
     })
 
     layer.on('mouseover', () => {
-      if (!permanent) {
+      const perm = mapZoomRef.current >= 11
+      if (!perm) {
         const prev = parishHoverTooltipLayerRef.current
         if (prev && prev !== layer) prev.closeTooltip()
         parishHoverTooltipLayerRef.current = layer
@@ -1126,7 +1139,8 @@ export function VenezuelaMap({
       ;(layer as L.Path).bringToFront()
     })
     layer.on('mouseout', () => {
-      if (!permanent) {
+      const perm = mapZoomRef.current >= 11
+      if (!perm) {
         if (parishHoverTooltipLayerRef.current === layer) {
           parishHoverTooltipLayerRef.current = null
         }
@@ -1145,6 +1159,58 @@ export function VenezuelaMap({
         state: stateDisplay,
       })
     })
+  }, [])
+
+  const prevMuniPerm = useRef(mapZoom >= 10)
+  const prevParishPerm = useRef(mapZoom >= 11)
+
+  useEffect(() => {
+    const muniPerm = mapZoom >= 10
+    const parishPerm = mapZoom >= 11
+
+    if (muniPerm !== prevMuniPerm.current) {
+      prevMuniPerm.current = muniPerm
+      muniGeoLayerRef.current?.eachLayer((layer) => {
+        const meta = (layer as any)._muniMeta
+        if (!meta) return
+        layer.unbindTooltip()
+        const tipHtml = muniPerm
+          ? `<span class="muni-perm-inner">${escapeHtml(meta.muniDisplay)}</span>`
+          : `<div class="muni-hover-inner">
+              <span class="muni-hover-name">${escapeHtml(meta.muniDisplay)}</span>
+              <span class="muni-hover-state">${escapeHtml(meta.stateDisplay)}</span>
+            </div>`
+        layer.bindTooltip(tipHtml, {
+          permanent: muniPerm,
+          direction: muniPerm ? 'center' : 'right',
+          sticky: !muniPerm,
+          className: muniPerm ? 'muni-label-permanent' : 'muni-tooltip-hover',
+          offset: muniPerm ? [0, 2] as [number, number] : [10, 0],
+        })
+      })
+    }
+
+    if (parishPerm !== prevParishPerm.current) {
+      prevParishPerm.current = parishPerm
+      parishGeoLayerRef.current?.eachLayer((layer) => {
+        const meta = (layer as any)._parishMeta
+        if (!meta) return
+        layer.unbindTooltip()
+        const tipHtml = parishPerm
+          ? `<span class="parish-perm-inner">${escapeHtml(meta.parishDisplay)}</span>`
+          : `<div class="parish-hover-inner">
+              <span class="parish-hover-name">${escapeHtml(meta.parishDisplay)}</span>
+              <span class="parish-hover-muni">${escapeHtml(meta.muniDisplay)} · ${escapeHtml(meta.stateDisplay)}</span>
+            </div>`
+        layer.bindTooltip(tipHtml, {
+          permanent: parishPerm,
+          direction: parishPerm ? 'center' : 'right',
+          sticky: !parishPerm,
+          className: parishPerm ? 'parish-label-permanent' : 'parish-tooltip-hover',
+          offset: parishPerm ? [0, 1] as [number, number] : [10, 0],
+        })
+      })
+    }
   }, [mapZoom])
 
   const handleStateClick = useCallback((state: StateData) => {
@@ -2215,7 +2281,8 @@ export function VenezuelaMap({
 
               {showMunicipalities && muniGeo && (
                 <GeoJSON
-                  key={`municipalities-${mapZoom >= 10}-${myLocMuniGid ?? 'x'}-${myLocVisualIsolate ? 'f' : 'a'}`}
+                  ref={muniGeoLayerRef as any}
+                  key={`municipalities-${myLocMuniGid ?? 'x'}-${myLocVisualIsolate ? 'f' : 'a'}`}
                   data={muniGeo}
                   pane="venMuni"
                   style={getMunicipalityStyle}
@@ -2225,7 +2292,8 @@ export function VenezuelaMap({
 
               {showParishes && parishGeo && (
                 <GeoJSON
-                  key={`parishes-${mapZoom >= 11}-${myLocParishPcode ?? 'x'}-${myLocVisualIsolate ? 'f' : 'a'}`}
+                  ref={parishGeoLayerRef as any}
+                  key={`parishes-${myLocParishPcode ?? 'x'}-${myLocVisualIsolate ? 'f' : 'a'}`}
                   data={parishGeo}
                   pane="venParish"
                   style={getParishStyle}
