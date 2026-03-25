@@ -23,6 +23,43 @@ type MapLayerManagerProps = {
   onLayerOrderChange: (order: StackableMapLayerId[]) => void
   visibility: MapLayerVisibility
   onVisibilityChange: (key: keyof MapLayerVisibility, visible: boolean) => void
+  /** Se añade al botón flotante de capas (p. ej. `max-lg:hidden` si el tab va en un dock). */
+  tabClassName?: string
+}
+
+/** Botón para abrir el panel de capas: segmento dentro del dock móvil o pestaña flotante en escritorio. */
+export function MapLayersTabButton({
+  onClick,
+  dockSegment,
+  className = '',
+}: {
+  onClick: () => void
+  /** `true`: sin borde propio, ancho completo del dock (pegado a Territorios). */
+  dockSegment: boolean
+  className?: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Orden y visibilidad de capas"
+      className={
+        dockSegment
+          ? `flex w-full flex-col items-center justify-center gap-1 border-0 bg-transparent py-2.5 px-0.5 text-sky-200 shadow-none transition-colors hover:bg-sky-500/12 active:bg-sky-500/18 ${className}`
+          : `absolute z-[2180] flex flex-col items-center justify-center gap-2 rounded-r-xl border border-sky-500/45 bg-shadow-900/95 py-4 pl-1.5 pr-2 shadow-xl backdrop-blur-sm transition-all hover:border-sky-400/55 hover:bg-sky-500/10 left-0 top-[42%] -translate-y-1/2 ${className}`
+      }
+      aria-expanded={false}
+      aria-controls="ven-map-layer-panel"
+    >
+      <Layers className="h-5 w-5 flex-shrink-0 text-sky-300" aria-hidden />
+      <span
+        className="max-h-[9rem] text-[9px] font-mono font-semibold uppercase leading-tight tracking-wide text-sky-200/95"
+        style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+      >
+        Capas
+      </span>
+    </button>
+  )
 }
 
 export function MapLayerManager({
@@ -32,6 +69,7 @@ export function MapLayerManager({
   onLayerOrderChange,
   visibility,
   onVisibilityChange,
+  tabClassName = '',
 }: MapLayerManagerProps) {
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
@@ -71,24 +109,7 @@ export function MapLayerManager({
   return (
     <>
       {!open && (
-        <button
-          type="button"
-          onClick={() => onOpenChange(true)}
-          title="Orden y visibilidad de capas"
-          className="absolute z-[2180] flex flex-col items-center justify-center gap-2 rounded-r-xl border border-sky-500/45 bg-shadow-900/95 py-4 pl-1.5 pr-2 shadow-xl backdrop-blur-sm transition-all hover:border-sky-400/55 hover:bg-sky-500/10
-            left-0 top-[42%] -translate-y-1/2 max-lg:top-[38%]"
-          aria-expanded={false}
-          aria-controls="ven-map-layer-panel"
-        >
-          <Layers className="h-5 w-5 flex-shrink-0 text-sky-300" aria-hidden />
-          <span
-            className="hidden max-h-[10rem] text-[9px] font-mono font-semibold uppercase leading-tight tracking-wide text-sky-200/95 sm:block"
-            style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
-          >
-            Capas
-          </span>
-          <span className="text-[9px] font-mono text-sky-200/90 sm:hidden px-0.5">Map</span>
-        </button>
+        <MapLayersTabButton onClick={() => onOpenChange(true)} dockSegment={false} className={tabClassName} />
       )}
 
       <AnimatePresence>

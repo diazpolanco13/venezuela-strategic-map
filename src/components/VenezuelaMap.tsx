@@ -5,10 +5,13 @@ import { useState, useEffect, useCallback, useMemo, useRef, type KeyboardEvent a
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   MapPin, Users, ChevronRight, ChevronLeft, ChevronDown,
-  Eye, Hash, X, Loader2, Layers, LayoutGrid, Search,
-  Navigation, Clipboard, Share2, PanelRight, Globe2, Map as MapIcon, Waypoints,
+  Eye, X, Loader2, Layers, LayoutGrid, Search,
+  Navigation, Clipboard, Share2, Globe2, Map as MapIcon, Waypoints, BarChart3,
+  Crosshair, Filter, Plus, LogOut, MapPinned,
 } from 'lucide-react'
-import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap } from 'react-leaflet'
+import { NeuralMobileRail } from './mapMobile/NeuralMobileRail'
+import { NeuralMobileBottomNav, type NeuralMobileNavTab } from './mapMobile/NeuralMobileBottomNav'
+import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap, useMapEvents } from 'react-leaflet'
 import type { Layer } from 'leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -36,6 +39,7 @@ import {
   type StackableMapLayerId,
 } from '../config/mapLayerStack'
 import { MapLayerManager, type MapLayerVisibility } from './MapLayerManager'
+import { useTacticalHud, type TacticalCursor } from '../context/TacticalHudContext'
 import {
   buildTerritoryIndex,
   searchTerritory,
@@ -139,6 +143,168 @@ function MapLayerPanes({ zByPane }: { zByPane: Record<string, string> }) {
     }
   }, [map, zByPane])
   return null
+}
+
+/** Cursor + centro del mapa → cabecera HUD / barra inferior. */
+function MapHudBridges() {
+  const hud = useTacticalHud()
+  const map = useMap()
+  /** No incluir `hud` en deps del efecto: el valor del contexto cambia identidad en cada setState y re-dispararía el efecto en bucle. */
+  const setCursorRef = useRef(hud?.setCursor)
+  const setMapCenterRef = useRef(hud?.setMapCenter)
+  setCursorRef.current = hud?.setCursor
+  setMapCenterRef.current = hud?.setMapCenter
+
+  const lastCursorRef = useRef<TacticalCursor | null>(null)
+  useMapEvents({
+    mousemove(e) {
+      const setC = setCursorRef.current
+      if (!setC) return
+      const lat = e.latlng.lat
+      const lng = e.latlng.lng
+      const p = lastCursorRef.current
+      if (p != null && Math.abs(p.lat - lat) < 1e-5 && Math.abs(p.lng - lng) < 1e-5) return
+      lastCursorRef.current = { lat, lng }
+      setC({ lat, lng })
+    },
+    mouseout() {
+      lastCursorRef.current = null
+      setCursorRef.current?.(null)
+    },
+  })
+
+  const lastCenterRef = useRef<{ lat: number; lng: number } | null>(null)
+  useEffect(() => {
+    const setMapCenter = setMapCenterRef.current
+    if (!setMapCenter) return
+    const sync = () => {
+      const c = map.getCenter()
+      const lat = c.lat
+      const lng = c.lng
+      const p = lastCenterRef.current
+      if (p != null && Math.abs(p.lat - lat) < 1e-7 && Math.abs(p.lng - lng) < 1e-7) return
+      lastCenterRef.current = { lat, lng }
+      setMapCenter({ lat, lng })
+    }
+    sync()
+    map.on('moveend', sync)
+    return () => {
+      map.off('moveend', sync)
+    }
+  }, [map])
+  return null
+}
+
+/**
+ * Móvil: desplaza el mapa para que el marcador GPS quede más arriba en el viewport
+ * (mejor centrado visual sobre el área libre encima de la tarjeta «Tu ubicación»).
+ */
+function MapMyLocationMobileFraming({ lat, lng, active }: { lat: number; lng: number; active: boolean }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (!active) return
+    if (typeof window === 'undefined' || window.matchMedia('(min-width: 1024px)').matches) return
+
+    let cancelled = false
+    const nudge = () => {
+      if (cancelled) return
+      const ll = L.latLng(lat, lng)
+      if (!map.getBounds().contains(ll)) return
+      const pt = map.latLngToContainerPoint(ll)
+      const h = map.getSize().y
+      const w = map.getSize().x
+      if (w < 80 || h < 120) return
+      const targetY = h * 0.33
+      const dy = pt.y - targetY
+      if (Math.abs(dy) < 16) return
+      map.panBy(L.point(0, dy), { animate: true, duration: 0.38 })
+    }
+
+    const t1 = window.setTimeout(nudge, 480)
+    const t2 = window.setTimeout(nudge, 1100)
+    const t3 = window.setTimeout(nudge, 1900)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+      window.clearTimeout(t3)
+    }
+  }, [active, lat, lng, map])
+
+  return null
+}
+
+type TacticalRailMode = 'map' | 'layers' | 'nodes'
+
+function TacticalDesktopRail({
+  mode,
+  showTerritoryPanel,
+  onSelectMap,
+  onSelectLayers,
+  onSelectNodes,
+  onHome,
+}: {
+  mode: TacticalRailMode
+  showTerritoryPanel: boolean
+  onSelectMap: () => void
+  onSelectLayers: () => void
+  onSelectNodes: () => void
+  onHome: () => void
+}) {
+  const railBtn = (active: boolean) =>
+    `group flex w-full items-center justify-center border-l-2 py-3 transition-all ${
+      active
+        ? 'border-cyan-400 bg-cyan-500/[0.07] text-cyan-200 shadow-[inset_0_0_24px_rgba(0,242,255,0.07)]'
+        : 'border-transparent text-cyan-600/45 hover:border-cyan-500/30 hover:bg-white/[0.03] hover:text-cyan-300/90'
+    }`
+  return (
+    <aside
+      className="hidden w-[50px] flex-shrink-0 flex-col border-r border-cyan-500/20 bg-[rgba(3,5,9,0.94)] backdrop-blur-md lg:flex"
+      aria-label="Módulos tácticos"
+    >
+      <div className="flex flex-1 flex-col gap-0.5 py-2">
+        <button
+          type="button"
+          className={railBtn(mode === 'map')}
+          onClick={onSelectMap}
+          title="Vista mapa"
+          aria-label="Vista mapa"
+        >
+          <MapIcon className="h-5 w-5" strokeWidth={1.35} />
+        </button>
+        <button
+          type="button"
+          className={railBtn(mode === 'layers')}
+          onClick={onSelectLayers}
+          title="Capas y orden"
+          aria-label="Capas"
+        >
+          <Layers className="h-5 w-5" strokeWidth={1.35} />
+        </button>
+        {showTerritoryPanel && (
+          <button
+            type="button"
+            className={railBtn(mode === 'nodes')}
+            onClick={onSelectNodes}
+            title="Lista de territorios"
+            aria-label="Territorios"
+          >
+            <MapPinned className="h-5 w-5" strokeWidth={1.35} />
+          </button>
+        )}
+      </div>
+      <div className="flex flex-col gap-0.5 border-t border-cyan-500/15 py-2">
+        <button type="button" className={railBtn(false)} onClick={onHome} title="Encuadre Venezuela" aria-label="Encuadre Venezuela">
+          <Plus className="h-5 w-5" strokeWidth={1.35} />
+        </button>
+        <button type="button" className={railBtn(false)} onClick={onHome} title="Restablecer vista" aria-label="Restablecer vista">
+          <LogOut className="h-4 w-4" strokeWidth={1.35} />
+        </button>
+      </div>
+    </aside>
+  )
 }
 
 function escapeHtml(s: string): string {
@@ -299,6 +465,9 @@ export function VenezuelaMap({
   selectedMunicipalityRef.current = selectedMunicipality
   const selectedParishRef = useRef(selectedParish)
   selectedParishRef.current = selectedParish
+  /** Un solo tooltip hover a la vez (mouseout entre polígonos adyacentes no siempre llega a tiempo). */
+  const parishHoverTooltipLayerRef = useRef<Layer | null>(null)
+  const municipalityHoverTooltipLayerRef = useRef<Layer | null>(null)
   const [sortBy, setSortBy] = useState<string>('name')
 
   useEffect(() => {
@@ -317,6 +486,12 @@ export function VenezuelaMap({
   const [parishIndexWanted, setParishIndexWanted] = useState(false)
   /** Leyenda REDI: en móvil colapsada por defecto */
   const [rediLegendMobileOpen, setRediLegendMobileOpen] = useState(false)
+  const [mobileNavTab, setMobileNavTab] = useState<NeuralMobileNavTab>('explore')
+  const [mobileSearchExpanded, setMobileSearchExpanded] = useState(false)
+  const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false)
+  /** Carril neural izquierdo: oculto por defecto para ganar área de mapa. */
+  const [mobileRailOpen, setMobileRailOpen] = useState(false)
+  const mobileMapSearchRef = useRef<HTMLDivElement>(null)
 
   const [statesGeo, setStatesGeo] = useState<any>(null)
   const [countryOutlineGeo, setCountryOutlineGeo] = useState<any>(null)
@@ -333,6 +508,17 @@ export function VenezuelaMap({
   const [parishesLoading, setParishesLoading] = useState(false)
 
   const [flyTarget, setFlyTarget] = useState<MapFlyRequest | null>(null)
+  const hud = useTacticalHud()
+
+  const flyOperationalHome = useCallback(() => {
+    setFlyTarget({ kind: 'point', center: [7.5, -66.58], zoom: 5.5, duration: 1.25 })
+  }, [])
+
+  const tacticalRailMode = useMemo((): TacticalRailMode => {
+    if (layersPanelOpen) return 'layers'
+    if (sidebarOpen && showTerritoryPanel) return 'nodes'
+    return 'map'
+  }, [layersPanelOpen, sidebarOpen, showTerritoryPanel])
 
   /** Resaltado solo municipio+parroquia del GPS (resto atenuado). */
   const [myLocMuniGid, setMyLocMuniGid] = useState<string | null>(null)
@@ -462,9 +648,11 @@ export function VenezuelaMap({
 
   useEffect(() => {
     const close = (e: MouseEvent) => {
-      if (mapSearchRef.current && !mapSearchRef.current.contains(e.target as Node)) {
-        setMapSearchOpen(false)
-      }
+      const t = e.target as Node
+      if (mapSearchRef.current?.contains(t)) return
+      if (mobileMapSearchRef.current?.contains(t)) return
+      setMapSearchOpen(false)
+      setMobileSearchExpanded(false)
     }
     document.addEventListener('mousedown', close)
     return () => document.removeEventListener('mousedown', close)
@@ -840,6 +1028,11 @@ export function VenezuelaMap({
     })
 
     layer.on('mouseover', () => {
+      if (!permanent) {
+        const prev = municipalityHoverTooltipLayerRef.current
+        if (prev && prev !== layer) prev.closeTooltip()
+        municipalityHoverTooltipLayerRef.current = layer
+      }
       if (selectedMunicipalityRef.current?.gid === gid) return
       ;(layer as L.Path).setStyle({
         fillColor: 'rgba(192, 132, 252, 0.2)',
@@ -851,6 +1044,12 @@ export function VenezuelaMap({
       ;(layer as L.Path).bringToFront()
     })
     layer.on('mouseout', () => {
+      if (!permanent) {
+        if (municipalityHoverTooltipLayerRef.current === layer) {
+          municipalityHoverTooltipLayerRef.current = null
+        }
+        layer.closeTooltip()
+      }
       ;(layer as L.Path).setStyle(getMunicipalityStyleRef.current(feature))
     })
     layer.on('click', (e: L.LeafletMouseEvent) => {
@@ -911,6 +1110,11 @@ export function VenezuelaMap({
     })
 
     layer.on('mouseover', () => {
+      if (!permanent) {
+        const prev = parishHoverTooltipLayerRef.current
+        if (prev && prev !== layer) prev.closeTooltip()
+        parishHoverTooltipLayerRef.current = layer
+      }
       if (selectedParishRef.current?.pcode === pcode) return
       ;(layer as L.Path).setStyle({
         fillColor: 'rgba(34, 211, 238, 0.14)',
@@ -922,6 +1126,12 @@ export function VenezuelaMap({
       ;(layer as L.Path).bringToFront()
     })
     layer.on('mouseout', () => {
+      if (!permanent) {
+        if (parishHoverTooltipLayerRef.current === layer) {
+          parishHoverTooltipLayerRef.current = null
+        }
+        layer.closeTooltip()
+      }
       ;(layer as L.Path).setStyle(getParishStyleRef.current(feature))
     })
     layer.on('click', (e: L.LeafletMouseEvent) => {
@@ -1059,6 +1269,25 @@ export function VenezuelaMap({
       { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 },
     )
   }, [])
+
+  const handleMobileNav = useCallback(
+    (tab: NeuralMobileNavTab) => {
+      setMobileNavTab(tab)
+      setMobileSettingsOpen(false)
+      if (tab === 'explore') {
+        setMobileRailOpen(true)
+        setRediLegendMobileOpen(false)
+      }
+      if (tab === 'legend') {
+        setRediLegendMobileOpen(true)
+      }
+      if (tab === 'vital' && showGeolocation) {
+        locateMe()
+        setMyLocationCardVisible(true)
+      }
+    },
+    [showGeolocation, locateMe],
+  )
 
   const clearMyLocationMarker = useCallback(() => {
     setMyLocation(null)
@@ -1259,24 +1488,20 @@ export function VenezuelaMap({
 
   return (
     <div className={`h-full flex flex-col overflow-hidden ${className}`}>
-      {/* Header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pb-2 flex-shrink-0 min-w-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <MapPin className="w-4 h-4 sm:w-5 sm:h-5 text-neon-blue flex-shrink-0" />
-          <h1 className="text-sm sm:text-base font-display font-bold text-white truncate">{mapTitle}</h1>
-          {mapSubtitle != null && mapSubtitle !== '' && (
-            <span className="text-[10px] text-gray-600 font-mono hidden sm:block">{mapSubtitle}</span>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 md:gap-3">
+      {/* Capas tácticas — escritorio (marca en cabecera App) */}
+      <div className="mb-1.5 hidden min-w-0 flex-shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1 rounded-md border border-cyan-500/12 bg-black/40 px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm lg:flex">
+        <span className="mr-1 shrink-0 border-r border-cyan-500/10 pr-2 font-mono text-[8px] uppercase tracking-[0.2em] text-cyan-600/85">
+          Live_feed
+        </span>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5 md:gap-2">
           <button
             type="button"
             onClick={() => setShowCountrySilhouette(!showCountrySilhouette)}
             title="Silueta de Venezuela (contorno país)"
-            className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-mono transition-all
               ${showCountrySilhouette
-                ? 'bg-sky-500/15 border-sky-400/45 text-sky-200'
-                : 'bg-shadow-800 border-white/10 text-gray-500 hover:text-gray-300'
+                ? 'border border-sky-400/50 bg-sky-500/10 text-sky-200 shadow-[0_0_14px_rgba(56,189,248,0.18)]'
+                : 'tactical-toggle-idle'
               }`}
           >
             <Globe2 className="w-3 h-3 flex-shrink-0" />
@@ -1286,10 +1511,10 @@ export function VenezuelaMap({
             type="button"
             onClick={() => setShowStatesLayer(!showStatesLayer)}
             title="Límites de estados (sin colores REDI)"
-            className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-mono transition-all
               ${showStatesLayer
-                ? 'bg-emerald-500/15 border-emerald-400/45 text-emerald-200'
-                : 'bg-shadow-800 border-white/10 text-gray-500 hover:text-gray-300'
+                ? 'border border-emerald-400/50 bg-emerald-500/10 text-emerald-200 shadow-[0_0_14px_rgba(52,211,153,0.15)]'
+                : 'tactical-toggle-idle'
               }`}
           >
             <MapIcon className="w-3 h-3 flex-shrink-0" />
@@ -1299,10 +1524,10 @@ export function VenezuelaMap({
             type="button"
             onClick={() => setShowMunicipalities(!showMunicipalities)}
             title="Capa municipios"
-            className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-mono transition-all
               ${showMunicipalities
-                ? 'bg-neon-purple/20 border-neon-purple/40 text-neon-purple'
-                : 'bg-shadow-800 border-white/10 text-gray-500 hover:text-gray-300'
+                ? 'border border-fuchsia-400/45 bg-fuchsia-500/10 text-fuchsia-200 shadow-[0_0_14px_rgba(217,70,239,0.12)]'
+                : 'tactical-toggle-idle'
               }`}
           >
             <Layers className="w-3 h-3 flex-shrink-0" />
@@ -1312,10 +1537,10 @@ export function VenezuelaMap({
             type="button"
             onClick={() => setShowParishes(!showParishes)}
             title="Capa parroquias"
-            className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-mono transition-all
               ${showParishes
-                ? 'bg-cyan-500/15 border-cyan-400/45 text-cyan-300'
-                : 'bg-shadow-800 border-white/10 text-gray-500 hover:text-gray-300'
+                ? 'border border-cyan-400/50 bg-cyan-500/10 text-cyan-200 shadow-[0_0_14px_rgba(34,211,238,0.16)]'
+                : 'tactical-toggle-idle'
               }`}
           >
             <LayoutGrid className="w-3 h-3 flex-shrink-0" />
@@ -1325,10 +1550,10 @@ export function VenezuelaMap({
             type="button"
             onClick={() => setShowRediLayer(!showRediLayer)}
             title="Capa REDI — colores por región estratégica"
-            className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-mono transition-all
               ${showRediLayer
-                ? 'bg-neon-blue/20 border-neon-blue/45 text-neon-blue'
-                : 'bg-shadow-800 border-white/10 text-gray-500 hover:text-gray-300'
+                ? 'border border-cyan-300/55 bg-cyan-500/10 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.2)]'
+                : 'tactical-toggle-idle'
               }`}
           >
             <Waypoints className="w-3 h-3 flex-shrink-0" />
@@ -1340,9 +1565,8 @@ export function VenezuelaMap({
                 type="button"
                 onClick={locateMe}
                 disabled={myLocGeoPending}
-                className="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
-                  bg-shadow-800 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 hover:border-cyan-400/55
-                  disabled:opacity-45 disabled:cursor-not-allowed"
+                className="flex items-center gap-1.5 rounded border border-cyan-500/40 bg-black/50 px-2 py-1 text-[10px] font-mono text-cyan-200 shadow-[0_0_12px_rgba(34,211,238,0.08)] transition-all hover:border-cyan-400/55 hover:bg-cyan-500/10
+                  disabled:cursor-not-allowed disabled:opacity-45"
                 title="Geolocalizar y mostrar tu posición en el mapa"
               >
                 {myLocGeoPending ? (
@@ -1357,7 +1581,7 @@ export function VenezuelaMap({
                   type="button"
                   onClick={() => setMyLocationCardVisible(true)}
                   title="Mostrar tarjeta de ubicación"
-                  className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono border border-white/15 text-gray-400 hover:text-cyan-200 hover:border-cyan-500/30"
+                  className="flex items-center gap-1 rounded border border-cyan-500/20 px-2 py-1 text-[10px] font-mono text-gray-400 transition-colors hover:border-cyan-400/40 hover:text-cyan-200"
                 >
                   <Clipboard className="w-3 h-3 sm:hidden flex-shrink-0" aria-hidden />
                   <span className="hidden sm:inline">Ver tarjeta</span>
@@ -1370,10 +1594,10 @@ export function VenezuelaMap({
               type="button"
               title="Marcadores en mapa"
               onClick={() => setShowMarkers(!showMarkers)}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+              className={`flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-mono transition-all
                 ${showMarkers
-                  ? 'bg-neon-green/20 border-neon-green/40 text-neon-green'
-                  : 'bg-shadow-800 border-white/10 text-gray-500 hover:text-gray-300'
+                  ? 'border border-emerald-400/45 bg-emerald-500/10 text-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.15)]'
+                  : 'tactical-toggle-idle'
                 }`}
             >
               <MapPin className="w-3 h-3 flex-shrink-0" />
@@ -1382,12 +1606,14 @@ export function VenezuelaMap({
             </button>
           )}
           {showSummaryToolbar && (
-            <div className="hidden lg:flex items-center gap-3">
+            <div className="hidden items-center gap-2 border-l border-cyan-500/15 pl-3 lg:flex">
               {summaryToolbarItems.map(m => (
-                <div key={m.id} className="flex items-center gap-1">
-                  <Hash className="w-3 h-3 text-gray-500" />
-                  <span className="text-[11px] font-mono text-gray-400">{m.value}</span>
-                  <span className="text-[9px] text-gray-600">{m.label}</span>
+                <div
+                  key={m.id}
+                  className="min-w-0 rounded border border-cyan-500/15 bg-black/40 px-2 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                >
+                  <div className="truncate text-[7px] font-mono uppercase tracking-wider text-cyan-500/65">{m.label}</div>
+                  <div className="font-mono text-[11px] tabular-nums text-cyan-100">{m.value}</div>
                 </div>
               ))}
             </div>
@@ -1395,20 +1621,219 @@ export function VenezuelaMap({
         </div>
       </div>
 
+      {/* Cabecera móvil — estilo NEURAL_MAP */}
+      <div className="lg:hidden flex-shrink-0 border-b border-cyan-500/25 bg-[rgba(6,10,16,0.92)] px-2 pb-2 pt-2 shadow-[0_6px_28px_rgba(0,0,0,0.45)]">
+        <div className="relative flex min-h-[2.25rem] items-center justify-center">
+          <div className="flex max-w-[calc(100%-3rem)] flex-col items-center gap-0.5 px-10 text-center">
+            <h1
+              className="truncate text-[10px] font-display font-bold uppercase tracking-[0.28em] text-cyan-300 drop-shadow-[0_0_16px_rgba(34,211,238,0.4)] sm:text-[11px]"
+              title={mapTitle}
+            >
+              {mapTitle}
+            </h1>
+            {mapSubtitle != null && mapSubtitle !== '' && (
+              <p className="line-clamp-1 text-[7px] font-mono text-cyan-500/55">{mapSubtitle}</p>
+            )}
+          </div>
+          {showMapSearch && (
+            <button
+              type="button"
+              onClick={() => {
+                setMobileSearchExpanded(o => !o)
+                if (!mobileSearchExpanded) setMapSearchOpen(true)
+              }}
+              className="absolute right-0 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg border border-cyan-500/35 bg-shadow-900/90 text-cyan-300 shadow-md transition-colors hover:border-cyan-400/55 hover:bg-cyan-500/10"
+              title={mobileSearchExpanded ? 'Ocultar búsqueda' : 'Buscar territorio'}
+              aria-expanded={mobileSearchExpanded}
+            >
+              <Search className="h-4 w-4" aria-hidden />
+            </button>
+          )}
+        </div>
+        {showMapSearch && mobileSearchExpanded && (
+          <div ref={mobileMapSearchRef} className="mt-2 space-y-1.5">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neon-blue drop-shadow-sm" />
+              <input
+                type="search"
+                value={territorialSearchQuery}
+                onChange={e => {
+                  setTerritorialSearchQuery(e.target.value)
+                  setMapSearchOpen(true)
+                }}
+                onFocus={() => setMapSearchOpen(true)}
+                onKeyDown={onMapSearchKeyDown}
+                placeholder="Buscar municipio, parroquia o estado…"
+                className="input-territory-search w-full rounded-xl border border-white/20 py-2.5 pl-9 pr-9 text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.5)] focus:border-neon-blue/60 focus:outline-none focus:ring-2 focus:ring-neon-blue/45"
+                autoComplete="off"
+                spellCheck={false}
+                aria-autocomplete="list"
+                aria-expanded={showMapSearchDropdown}
+                aria-controls="territory-search-results-mobile"
+              />
+              {territorialSearchQuery.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTerritorialSearchQuery('')
+                    setSearchHighlightIdx(0)
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-gray-500 transition-colors hover:bg-white/10 hover:text-white"
+                  aria-label="Limpiar búsqueda"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            {showMapSearchDropdown && (
+              <div
+                id="territory-search-results-mobile"
+                role="listbox"
+                className="max-h-[min(16rem,38vh)] overflow-y-auto rounded-xl border border-white/12 bg-[rgba(8,12,18,0.96)] shadow-[0_16px_48px_rgba(0,0,0,0.55)] ring-1 ring-white/[0.06] backdrop-blur-xl"
+              >
+                {searchHits.length === 0 ? (
+                  <div className="px-4 py-4 text-center text-xs font-mono text-gray-500">Sin coincidencias · prueba otro término</div>
+                ) : (
+                  <>
+                    <div className="sticky top-0 z-10 border-b border-white/8 bg-shadow-900/98 px-3 py-1.5 text-[9px] font-mono uppercase tracking-wider text-gray-500">
+                      {searchHits.length} resultado{searchHits.length === 1 ? '' : 's'}
+                    </div>
+                    {searchHits.map((hit, idx) => {
+                      const active = idx === searchHighlightIdx
+                      const badge = hit.kind === 'estado' ? 'Estado' : hit.kind === 'municipio' ? 'Municipio' : 'Parroquia'
+                      const Icon = hit.kind === 'estado' ? MapPin : hit.kind === 'municipio' ? Layers : LayoutGrid
+                      const title =
+                        hit.kind === 'estado'
+                          ? hit.state.name
+                          : hit.kind === 'municipio'
+                            ? hit.municipio.display
+                            : hit.parish.display
+                      const sub =
+                        hit.kind === 'estado'
+                          ? getStateRedi(hit.state.name) || '—'
+                          : hit.kind === 'municipio'
+                            ? hit.state.name
+                            : `${hit.municipio.display} · ${hit.state.name}`
+                      const key =
+                        hit.kind === 'estado'
+                          ? `me-${hit.state.id}-${idx}`
+                          : hit.kind === 'municipio'
+                            ? `mm-${hit.state.id}-${hit.municipio.norm}-${idx}`
+                            : `mp-${hit.parish.pcode}-${idx}`
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          role="option"
+                          aria-selected={active}
+                          onMouseEnter={() => setSearchHighlightIdx(idx)}
+                          onClick={() => applySearchHit(hit)}
+                          className={`flex w-full items-start gap-2.5 border-b border-white/[0.06] px-3 py-2.5 text-left transition-colors
+                            ${active ? 'border-l-2 border-l-neon-blue bg-neon-blue/14 pl-[10px]' : 'border-l-2 border-l-transparent hover:bg-white/[0.05]'}`}
+                        >
+                          <Icon className={`mt-0.5 h-4 w-4 flex-shrink-0 ${active ? 'text-neon-blue' : 'text-gray-500'}`} />
+                          <div className="min-w-0 flex-1">
+                            <span
+                              className={`mb-0.5 inline-block rounded border px-1.5 py-px text-[8px] font-mono uppercase tracking-wide
+                                ${hit.kind === 'parroquia' ? 'border-cyan-500/35 text-cyan-400/90' : hit.kind === 'municipio' ? 'border-purple-500/35 text-purple-300/90' : 'border-white/20 text-gray-400'}`}
+                            >
+                              {badge}
+                            </span>
+                            <div className={`truncate text-[13px] font-medium leading-snug ${active ? 'text-white' : 'text-gray-200'}`}>{title}</div>
+                            <div className="mt-0.5 truncate font-mono text-[10px] text-gray-500">{sub}</div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </>
+                )}
+              </div>
+            )}
+            {mapSearchOpen && territorialSearchQuery.length > 0 && territorialSearchQuery.length < 2 && (
+              <p className="text-center font-mono text-[10px] text-gray-500">Mínimo 2 caracteres para buscar</p>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Mapa + Sidebar: en &lt;lg el panel es drawer encima del mapa a pantalla completa */}
-      <div className="flex-1 min-h-0 flex overflow-hidden rounded-lg border border-white/5 relative">
+      <div className="tactical-map-frame relative flex min-h-0 flex-1 overflow-hidden rounded-lg">
+        <TacticalDesktopRail
+          mode={tacticalRailMode}
+          showTerritoryPanel={showTerritoryPanel}
+          onSelectMap={() => {
+            setLayersPanelOpen(false)
+          }}
+          onSelectLayers={() => {
+            setMobileSettingsOpen(false)
+            setLayersPanelOpen(true)
+          }}
+          onSelectNodes={() => {
+            if (!showTerritoryPanel) return
+            setMobileSettingsOpen(false)
+            setSidebarOpen(true)
+          }}
+          onHome={flyOperationalHome}
+        />
         {/* Mapa */}
-        <div className="relative territory-map min-h-0 min-w-0 w-full flex-1">
-          {/* Búsqueda territorial flotante (comparte estado con barra lateral) */}
+        <div className="relative min-h-0 min-w-0 flex-1 territory-map lg:pb-3">
+          <NeuralMobileRail
+            open={mobileRailOpen}
+            onOpenChange={setMobileRailOpen}
+            showTerritoryPanel={showTerritoryPanel}
+            onMenu={() => {
+              setMobileSettingsOpen(false)
+              if (showTerritoryPanel) setSidebarOpen(true)
+            }}
+            onLayers={() => {
+              setMobileSettingsOpen(false)
+              setLayersPanelOpen(true)
+            }}
+            onToggleRedi={() => setShowRediLayer(r => !r)}
+            onSettings={() => setMobileSettingsOpen(true)}
+            rediActive={showRediLayer}
+            territorySidebarOpen={sidebarOpen}
+            layersButtonVisible={!layersPanelOpen}
+          />
+          <NeuralMobileBottomNav
+            active={mobileNavTab}
+            onChange={handleMobileNav}
+            showAnalytics={showSummaryToolbar}
+            showVital={showGeolocation}
+          />
+
+          <div
+            className={`pointer-events-none absolute inset-0 max-lg:pb-14 lg:bottom-0 lg:left-0 lg:right-0 lg:top-0 lg:pl-0 ${mobileRailOpen ? 'max-lg:pl-12' : 'max-lg:pl-0'}`}
+          >
+          {/* Panel sector / coordenadas — escritorio */}
+          {hud?.mapCenter != null && (
+            <div className="tactical-hud-glass pointer-events-auto absolute right-3 top-3 z-[1004] hidden max-w-[15rem] rounded-md p-2.5 lg:block">
+              <div className="tactical-label-muted mb-1">Sector · map_core</div>
+              <div className="font-mono text-[9px] uppercase tracking-[0.08em] text-cyan-400/85">
+                <div>
+                  Lat{' '}
+                  <span className="tactical-data-glow tabular-nums">{hud.mapCenter.lat.toFixed(5)}</span>
+                </div>
+                <div>
+                  Lng{' '}
+                  <span className="tactical-data-glow tabular-nums">{hud.mapCenter.lng.toFixed(5)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Búsqueda territorial flotante — solo escritorio */}
           {showMapSearch && (
           <div
             ref={mapSearchRef}
-            className="absolute top-2 sm:top-3 left-1/2 z-[1100] w-[min(calc(100%-2.5rem),26rem)] sm:w-[min(calc(100%-1rem),26rem)] -translate-x-1/2 pointer-events-none"
+            className="pointer-events-none absolute top-2 z-[1100] hidden w-[min(calc(100%-2.5rem),26rem)] sm:top-3 lg:left-1/2 lg:block lg:-translate-x-1/2"
           >
             <div className="pointer-events-auto">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neon-blue pointer-events-none drop-shadow-sm" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.45)]" />
                 <input
+                  ref={el => {
+                    if (hud) hud.desktopSearchInputRef.current = el
+                  }}
                   type="search"
                   value={territorialSearchQuery}
                   onChange={(e) => {
@@ -1418,7 +1843,7 @@ export function VenezuelaMap({
                   onFocus={() => setMapSearchOpen(true)}
                   onKeyDown={onMapSearchKeyDown}
                   placeholder="Buscar municipio, parroquia o estado…"
-                  className="input-territory-search w-full pl-9 sm:pl-10 pr-9 sm:pr-10 py-2 sm:py-2.5 rounded-xl border border-white/20 text-[12px] sm:text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.5)] focus:outline-none focus:ring-2 focus:ring-neon-blue/45 focus:border-neon-blue/60"
+                  className="input-territory-search w-full rounded-xl border border-cyan-500/25 py-2 pl-9 pr-9 font-mono text-[11px] font-medium sm:py-2.5 sm:pl-10 sm:pr-10 sm:text-[12px] shadow-[0_8px_36px_rgba(0,0,0,0.55),0_0_24px_rgba(34,211,238,0.04)] backdrop-blur-md focus:border-cyan-400/50 focus:outline-none focus:ring-2 focus:ring-cyan-500/25"
                   autoComplete="off"
                   spellCheck={false}
                   aria-autocomplete="list"
@@ -1442,7 +1867,7 @@ export function VenezuelaMap({
                   <div
                     id="territory-search-results"
                     role="listbox"
-                    className="absolute left-0 right-0 top-[calc(100%+6px)] max-h-[min(18rem,40vh)] overflow-y-auto rounded-xl border border-white/12 bg-[rgba(8,12,18,0.96)] backdrop-blur-xl shadow-[0_16px_48px_rgba(0,0,0,0.55)] ring-1 ring-white/[0.06]"
+                    className="absolute left-0 right-0 top-[calc(100%+6px)] max-h-[min(18rem,40vh)] overflow-y-auto rounded-xl border border-cyan-500/20 bg-[rgba(6,10,14,0.97)] shadow-[0_16px_48px_rgba(0,0,0,0.6),0_0_1px_rgba(34,211,238,0.12)] ring-1 ring-cyan-500/10 backdrop-blur-xl"
                   >
                     {searchHits.length === 0 ? (
                       <div className="px-4 py-5 text-center text-xs text-gray-500 font-mono">
@@ -1513,6 +1938,7 @@ export function VenezuelaMap({
             </div>
           </div>
           )}
+          </div>
           <style>{`
             .territory-map .leaflet-container {
               background: #0a0e14;
@@ -1531,6 +1957,19 @@ export function VenezuelaMap({
               box-shadow: 0 4px 20px rgba(0,0,0,0.5) !important;
             }
             .centinela-tooltip::before { display: none !important; }
+            @media (max-width: 1023px) {
+              .territory-map .leaflet-top.leaflet-left {
+                top: 0.5rem !important;
+                left: auto !important;
+                right: 0.5rem !important;
+              }
+            }
+            @media (min-width: 1024px) {
+              .territory-map .leaflet-control-zoom {
+                border: 1px solid rgba(0, 242, 255, 0.22) !important;
+                box-shadow: 0 0 16px rgba(0, 242, 255, 0.08) !important;
+              }
+            }
             .territory-map .leaflet-control-zoom {
               border: 1px solid rgba(255,255,255,0.1) !important;
               border-radius: 8px !important;
@@ -1678,7 +2117,7 @@ export function VenezuelaMap({
             }
           `}</style>
 
-          <div className="absolute inset-0">
+          <div className="pointer-events-auto absolute inset-0">
             <MapContainer
               center={[7.5, -66.58]}
               zoom={5.5}
@@ -1697,6 +2136,14 @@ export function VenezuelaMap({
               <MapZoomSync onZoom={setMapZoom} />
               <MapInvalidateWhenSidebarChanges sidebarOpen={sidebarOpen} />
               <MapLayerPanes zByPane={paneZIndices} />
+              <MapHudBridges />
+              {showGeolocation && myLocation && myLocationCardVisible && (
+                <MapMyLocationMobileFraming
+                  lat={myLocation.lat}
+                  lng={myLocation.lng}
+                  active
+                />
+              )}
 
               {showCountrySilhouette && countryOutlineGeo && (
                 <GeoJSON
@@ -1805,11 +2252,11 @@ export function VenezuelaMap({
                   className: 'strategic-marker',
                   html: `<div style="
                     width:28px;height:28px;border-radius:50%;
-                    background:${m.typeColor}30;
+                    background:${m.typeColor}18;
                     border:2px solid ${m.typeColor};
                     display:flex;align-items:center;justify-content:center;
                     font-size:14px;cursor:pointer;
-                    box-shadow:0 0 8px ${m.typeColor}44, 0 2px 8px rgba(0,0,0,0.5);
+                    box-shadow:0 0 16px rgba(0,242,255,0.35), 0 0 8px ${m.typeColor}55, inset 0 0 10px rgba(0,242,255,0.06);
                   ">${m.typeIcon}</div>`,
                   iconSize: [28, 28],
                   iconAnchor: [14, 14],
@@ -1857,7 +2304,43 @@ export function VenezuelaMap({
                 <Marker position={[myLocation.lat, myLocation.lng]} icon={userLocationIcon} />
               )}
             </MapContainer>
+            <div
+              className="tactical-map-grid-overlay pointer-events-none absolute inset-0 z-[450] hidden opacity-[0.12] lg:block"
+              aria-hidden
+            />
           </div>
+
+          <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-[1006] hidden justify-end gap-2 px-2 pb-1.5 pt-0 lg:left-[50px] lg:flex">
+            <div className="pointer-events-auto flex flex-col items-end justify-end gap-1">
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={flyOperationalHome}
+                  className="tactical-hud-glass rounded-md p-2 text-cyan-400/85 transition-colors hover:border-cyan-400/35 hover:text-cyan-100"
+                  title="Encuadre Venezuela"
+                  aria-label="Encuadre Venezuela"
+                >
+                  <Crosshair className="h-4 w-4" strokeWidth={1.35} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileSettingsOpen(false)
+                    setLayersPanelOpen(true)
+                  }}
+                  className="tactical-hud-glass rounded-md p-2 text-cyan-400/85 transition-colors hover:border-cyan-400/35 hover:text-cyan-100"
+                  title="Gestor de capas"
+                  aria-label="Gestor de capas"
+                >
+                  <Filter className="h-4 w-4" strokeWidth={1.35} />
+                </button>
+              </div>
+              <span className="font-mono text-[6px] uppercase tracking-[0.2em] text-slate-600">
+                Encryption · AES-256-GCM
+              </span>
+            </div>
+          </div>
+
           <MapLayerManager
             open={layersPanelOpen}
             onOpenChange={setLayersPanelOpen}
@@ -1865,6 +2348,7 @@ export function VenezuelaMap({
             onLayerOrderChange={next => setLayerOrder(normalizeLayerOrder(next))}
             visibility={layerVisibility}
             onVisibilityChange={onLayerVisibilityChange}
+            tabClassName="hidden"
           />
 
           {showGeolocation && myLocError && (
@@ -1876,11 +2360,12 @@ export function VenezuelaMap({
           <AnimatePresence>
             {showGeolocation && myLocation && myLocationCardVisible && (
               <motion.div
-                initial={{ opacity: 0, x: 16 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 16 }}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
                 transition={{ duration: 0.22 }}
-                className="absolute top-[6.25rem] sm:top-[5.75rem] lg:top-14 left-2 right-2 sm:left-auto sm:right-3 z-[1001] w-auto sm:w-[min(18rem,calc(100vw-1.5rem))] max-w-none sm:max-w-[min(18rem,calc(100vw-1.5rem))] max-lg:max-h-[min(52vh,calc(100vh-12rem))] max-lg:overflow-y-auto rounded-lg border border-cyan-500/45 bg-shadow-900/96 shadow-2xl backdrop-blur-md overflow-hidden"
+                className="absolute bottom-[calc(3.5rem+14px)] left-2 right-2 top-auto z-[1001] max-h-[min(46vh,calc(100dvh-9.5rem))] overflow-y-auto rounded-lg border border-cyan-500/45 bg-shadow-900/96 shadow-2xl backdrop-blur-md
+                  lg:bottom-auto lg:top-14 lg:left-auto lg:right-3 lg:max-h-none lg:w-[min(18rem,calc(100vw-1.5rem))] lg:max-w-[min(18rem,calc(100vw-1.5rem))] lg:overflow-hidden"
               >
                 <div className="flex items-start justify-between gap-1.5 sm:gap-2 border-b border-cyan-500/25 px-2 py-2 sm:px-3 sm:py-2.5">
                   <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
@@ -1999,7 +2484,7 @@ export function VenezuelaMap({
           )}
 
           {/* Leyenda REDI + panel municipio */}
-          <div className="absolute bottom-2 left-2 right-2 sm:bottom-3 sm:left-3 sm:right-auto z-[1000] flex flex-col gap-2 items-stretch max-w-none sm:max-w-[min(18rem,calc(100vw-1.5rem))] pointer-events-none [&>*]:pointer-events-auto">
+          <div className="pointer-events-none absolute bottom-2 left-2 right-2 z-[1000] flex max-w-none flex-col items-stretch gap-2 max-lg:bottom-16 sm:bottom-3 sm:left-3 sm:right-auto sm:max-w-[min(18rem,calc(100vw-1.5rem))] [&>*]:pointer-events-auto">
             <AnimatePresence>
               {selectedParish && showParishes && (
                 <motion.div
@@ -2110,45 +2595,6 @@ export function VenezuelaMap({
               )}
             </AnimatePresence>
 
-            <div className="lg:hidden flex flex-col gap-1.5 items-stretch">
-              <button
-                type="button"
-                onClick={() => setRediLegendMobileOpen(o => !o)}
-                aria-expanded={rediLegendMobileOpen}
-                className="flex w-full items-center justify-between gap-2 rounded-lg border border-white/12 bg-shadow-900/95 px-2.5 py-2 text-left shadow-md backdrop-blur-sm transition-colors hover:bg-white/[0.06]"
-              >
-                <span className="flex items-center gap-2 min-w-0">
-                  <Layers className="h-3.5 w-3.5 flex-shrink-0 text-neon-blue" aria-hidden />
-                  <span className="text-[10px] font-mono text-gray-200">
-                    {rediLegendMobileOpen ? 'Ocultar leyenda REDI' : 'Leyenda REDI'}
-                  </span>
-                </span>
-                <ChevronDown
-                  className={`h-4 w-4 flex-shrink-0 text-gray-500 transition-transform ${rediLegendMobileOpen ? 'rotate-180' : ''}`}
-                  aria-hidden
-                />
-              </button>
-              <AnimatePresence initial={false}>
-                {rediLegendMobileOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 6 }}
-                    transition={{ duration: 0.18 }}
-                    className="rounded-lg"
-                  >
-                    <div className="max-h-[min(38vh,18rem)] overflow-y-auto overscroll-contain rounded-lg border border-white/10 bg-shadow-900/90 px-2.5 py-2 shadow-lg backdrop-blur-sm">
-                      <RediLegendInner
-                        showRediLayer={showRediLayer}
-                        showMunicipalities={showMunicipalities}
-                        showParishes={showParishes}
-                      />
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-
             <div className="hidden max-h-[min(42vh,20rem)] overflow-y-auto overscroll-contain lg:block">
               <div className="rounded-lg border border-white/10 bg-shadow-900/90 px-2.5 py-2 sm:px-3 shadow-lg backdrop-blur-sm">
                 <RediLegendInner
@@ -2246,25 +2692,189 @@ export function VenezuelaMap({
             })()}
           </AnimatePresence>
 
-          {showTerritoryPanel && !sidebarOpen && (
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(true)}
-              title="Abrir lista de territorios"
-              className="fixed z-[2100] flex items-center gap-2 rounded-xl border border-cyan-500/45 bg-shadow-900/95 px-3 py-2.5 shadow-xl backdrop-blur-sm transition-all hover:border-cyan-400/60 hover:bg-cyan-500/10
-                left-3 top-[5.25rem] sm:top-[5.5rem] sm:left-3
-                lg:left-auto lg:right-0 lg:top-1/2 lg:-translate-y-1/2 lg:rounded-l-xl lg:rounded-r-none lg:px-2 lg:py-5 lg:flex-col lg:gap-2.5"
-            >
-              <PanelRight className="h-5 w-5 flex-shrink-0 text-cyan-300" aria-hidden />
-              <span className="text-[11px] font-mono font-semibold text-cyan-100 lg:hidden">Territorios</span>
-              <span
-                className="hidden max-h-[9rem] text-[9px] font-mono font-semibold uppercase leading-tight tracking-wide text-cyan-200/90 lg:block"
-                style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
-              >
-                Territorios
-              </span>
-            </button>
-          )}
+          <AnimatePresence>
+            {mobileNavTab === 'legend' && (
+              <>
+                <motion.button
+                  key="mleg-backdrop"
+                  type="button"
+                  aria-label="Cerrar leyenda"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-[2270] bg-black/50 backdrop-blur-[1px] lg:hidden"
+                  onClick={() => handleMobileNav('explore')}
+                />
+                <motion.div
+                  key="mleg-sheet"
+                  role="dialog"
+                  aria-labelledby="mobile-legend-title"
+                  initial={{ y: '100%' }}
+                  animate={{ y: 0 }}
+                  exit={{ y: '100%' }}
+                  transition={{ type: 'spring', damping: 30, stiffness: 340 }}
+                  className="fixed inset-x-0 bottom-14 z-[2275] flex max-h-[min(48vh,26rem)] flex-col overflow-hidden rounded-t-2xl border border-cyan-500/35 bg-shadow-900/98 shadow-[0_-12px_48px_rgba(0,0,0,0.55)] backdrop-blur-md lg:hidden"
+                >
+                  <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Layers className="h-4 w-4 flex-shrink-0 text-neon-blue" aria-hidden />
+                      <h2 id="mobile-legend-title" className="truncate text-[11px] font-mono font-bold tracking-wider text-cyan-200">
+                        LEYENDA REDI
+                      </h2>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleMobileNav('explore')}
+                      className="flex-shrink-0 rounded-md border border-white/10 p-1.5 text-gray-400 hover:bg-white/5 hover:text-white"
+                      aria-label="Cerrar"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2.5">
+                    <RediLegendInner
+                      showRediLayer={showRediLayer}
+                      showMunicipalities={showMunicipalities}
+                      showParishes={showParishes}
+                    />
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {mobileNavTab === 'analytics' && showSummaryToolbar && (
+              <>
+                <motion.button
+                  key="man-backdrop"
+                  type="button"
+                  aria-label="Cerrar resumen"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-[2270] bg-black/50 backdrop-blur-[1px] lg:hidden"
+                  onClick={() => handleMobileNav('explore')}
+                />
+                <motion.div
+                  key="man-sheet"
+                  role="dialog"
+                  aria-labelledby="mobile-analytics-title"
+                  initial={{ y: '100%' }}
+                  animate={{ y: 0 }}
+                  exit={{ y: '100%' }}
+                  transition={{ type: 'spring', damping: 30, stiffness: 340 }}
+                  className="fixed inset-x-0 bottom-14 z-[2275] flex max-h-[min(42vh,22rem)] flex-col overflow-hidden rounded-t-2xl border border-neon-blue/35 bg-shadow-900/98 shadow-[0_-12px_48px_rgba(0,0,0,0.55)] backdrop-blur-md lg:hidden"
+                >
+                  <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <BarChart3 className="h-4 w-4 flex-shrink-0 text-neon-blue" aria-hidden />
+                      <h2 id="mobile-analytics-title" className="truncate text-[11px] font-mono font-bold tracking-wider text-gray-100">
+                        RESUMEN OPERATIVO
+                      </h2>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleMobileNav('explore')}
+                      className="flex-shrink-0 rounded-md border border-white/10 p-1.5 text-gray-400 hover:bg-white/5 hover:text-white"
+                      aria-label="Cerrar"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                      {summaryToolbarItems.map(m => (
+                        <div key={m.id} className="rounded-lg border border-white/10 bg-black/20 px-2 py-2 text-center">
+                          <div className="text-lg font-mono font-bold tabular-nums text-cyan-200">{m.value}</div>
+                          <div className="mt-0.5 text-[8px] font-mono uppercase leading-tight text-gray-500">{m.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {mobileSettingsOpen && (
+              <>
+                <motion.button
+                  key="mset-backdrop"
+                  type="button"
+                  aria-label="Cerrar ajustes"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-[2270] bg-black/50 backdrop-blur-[1px] lg:hidden"
+                  onClick={() => setMobileSettingsOpen(false)}
+                />
+                <motion.div
+                  key="mset-sheet"
+                  role="dialog"
+                  aria-labelledby="mobile-settings-title"
+                  initial={{ y: '100%' }}
+                  animate={{ y: 0 }}
+                  exit={{ y: '100%' }}
+                  transition={{ type: 'spring', damping: 30, stiffness: 340 }}
+                  className="fixed inset-x-0 bottom-14 z-[2275] flex max-h-[min(52vh,28rem)] flex-col overflow-hidden rounded-t-2xl border border-white/15 bg-shadow-900/98 shadow-[0_-12px_48px_rgba(0,0,0,0.55)] backdrop-blur-md lg:hidden"
+                >
+                  <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Globe2 className="h-4 w-4 flex-shrink-0 text-gray-400" aria-hidden />
+                      <h2 id="mobile-settings-title" className="truncate text-[11px] font-mono font-bold tracking-wider text-gray-100">
+                        AJUSTES DE CAPAS
+                      </h2>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setMobileSettingsOpen(false)}
+                      className="flex-shrink-0 rounded-md border border-white/10 p-1.5 text-gray-400 hover:bg-white/5 hover:text-white"
+                      aria-label="Cerrar"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain p-2.5">
+                    {(
+                      [
+                        { on: showCountrySilhouette, set: () => setShowCountrySilhouette(v => !v), label: 'Silueta Venezuela', Icon: Globe2 },
+                        { on: showStatesLayer, set: () => setShowStatesLayer(v => !v), label: 'Estados', Icon: MapIcon },
+                        { on: showMunicipalities, set: () => setShowMunicipalities(v => !v), label: 'Municipios', Icon: Layers },
+                        { on: showParishes, set: () => setShowParishes(v => !v), label: 'Parroquias', Icon: LayoutGrid },
+                        { on: showRediLayer, set: () => setShowRediLayer(v => !v), label: 'REDI', Icon: Waypoints },
+                        ...(markers.length > 0
+                          ? [{ on: showMarkers, set: () => setShowMarkers(v => !v), label: `Marcadores (${markers.length})`, Icon: MapPin }]
+                          : []),
+                      ] as {
+                        on: boolean
+                        set: () => void
+                        label: string
+                        Icon: typeof Globe2
+                      }[]
+                    ).map(({ on, set, label, Icon: RowIcon }) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={set}
+                        className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left text-[10px] font-mono transition-colors
+                          ${on ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-100' : 'border-white/10 bg-black/20 text-gray-400 hover:bg-white/[0.06]'}`}
+                      >
+                        <span className="flex items-center gap-2 min-w-0">
+                          <RowIcon className="h-3.5 w-3.5 flex-shrink-0" aria-hidden />
+                          <span className="truncate">{label}</span>
+                        </span>
+                        <span className="flex-shrink-0 text-[9px] text-gray-500">{on ? 'ON' : 'OFF'}</span>
+                      </button>
+                    ))}
+                    <p className="pt-1 text-center text-[8px] font-mono text-gray-600">Orden y apilado: pestaña «Capas» en el carril.</p>
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+
         </div>
 
         {showTerritoryPanel && sidebarOpen && (
@@ -2279,34 +2889,34 @@ export function VenezuelaMap({
         {/* Sidebar: drawer en móvil, columna en desktop */}
         {showTerritoryPanel && sidebarOpen && (
           <div
-            className="fixed inset-y-0 right-0 z-[1999] w-[min(20rem,calc(100vw-0.5rem))] flex flex-col bg-shadow-800/98 border-l border-white/10 flex-shrink-0 min-h-0 shadow-2xl
-              lg:relative lg:inset-auto lg:z-auto lg:w-80 lg:max-w-[20rem] lg:shadow-none lg:bg-shadow-800/80 lg:border-white/5"
+            className="fixed inset-y-0 right-0 z-[1999] flex min-h-0 w-[min(20rem,calc(100vw-0.5rem))] flex-shrink-0 flex-col border-l border-white/10 bg-shadow-800/98 shadow-2xl
+              lg:relative lg:inset-auto lg:z-auto lg:w-80 lg:max-w-[20rem] lg:border-l lg:border-cyan-500/15 lg:bg-[linear-gradient(180deg,rgba(8,10,14,0.96)_0%,rgba(5,7,11,0.98)_100%)] lg:shadow-[-8px_0_40px_rgba(0,0,0,0.35)]"
           >
-            <div className="flex items-center justify-between gap-2 border-b border-white/10 bg-shadow-900/50 px-2.5 py-2 flex-shrink-0">
+            <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-cyan-500/15 bg-black/35 px-2.5 py-2 backdrop-blur-sm">
               <div className="flex min-w-0 items-center gap-2">
-                <Users className="h-4 w-4 flex-shrink-0 text-neon-blue" aria-hidden />
-                <span className="truncate text-xs font-bold text-white">Territorios</span>
-                <span className="hidden text-[9px] font-mono text-gray-500 sm:inline">({stateData.length})</span>
+                <Users className="h-4 w-4 flex-shrink-0 text-cyan-400" aria-hidden />
+                <span className="truncate font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-200">Territorios</span>
+                <span className="hidden font-mono text-[9px] text-cyan-500/50 sm:inline">· {stateData.length}</span>
               </div>
               <button
                 type="button"
                 onClick={() => setSidebarOpen(false)}
-                className="flex-shrink-0 rounded-md border border-white/10 p-1.5 text-gray-400 transition-colors hover:border-white/20 hover:bg-white/5 hover:text-white"
+                className="flex-shrink-0 rounded-md border border-cyan-500/20 p-1.5 text-gray-400 transition-colors hover:border-cyan-400/35 hover:bg-cyan-500/5 hover:text-cyan-100"
                 title="Cerrar panel"
                 aria-label="Cerrar panel de territorios"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="space-y-2 border-b border-white/5 p-2 flex-shrink-0">
+            <div className="flex-shrink-0 space-y-2 border-b border-cyan-500/10 p-2">
               <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-cyan-500/60" />
                 <input
                   type="search"
                   value={territorialSearchQuery}
                   onChange={(e) => setTerritorialSearchQuery(e.target.value)}
-                  placeholder="Buscar estado, municipio, parroquia…"
-                  className="input-territory-search w-full pl-8 pr-8 py-2 rounded-lg border border-white/15 text-[11px] font-medium focus:outline-none focus:ring-1 focus:ring-neon-blue/50 focus:border-neon-blue/50"
+                  placeholder="Filtrar territorios…"
+                  className="input-territory-search w-full rounded-lg border border-cyan-500/20 py-2 pl-8 pr-8 font-mono text-[10px] font-medium text-cyan-100/90 focus:border-cyan-400/45 focus:outline-none focus:ring-1 focus:ring-cyan-500/25"
                   autoComplete="off"
                 />
                 {territorialSearchQuery.length > 0 && (

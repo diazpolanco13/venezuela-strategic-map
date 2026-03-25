@@ -11,9 +11,11 @@
 
   body {
     @apply bg-shadow-900 text-gray-100 font-body;
+    background-color: #050608;
     background-image:
-      radial-gradient(ellipse at top, rgba(168, 85, 247, 0.1) 0%, transparent 50%),
-      radial-gradient(ellipse at bottom, rgba(0, 212, 255, 0.05) 0%, transparent 50%);
+      radial-gradient(ellipse 120% 80% at 50% -20%, rgba(0, 212, 255, 0.07) 0%, transparent 55%),
+      radial-gradient(ellipse 80% 50% at 100% 50%, rgba(0, 212, 255, 0.03) 0%, transparent 45%),
+      linear-gradient(180deg, #06080c 0%, #050608 40%, #040508 100%);
     min-height: 100vh;
   }
 
@@ -25,6 +27,79 @@
 }
 
 @layer components {
+  /**
+   * Línea gráfica «táctica / C2» (escritorio): cian sobre negro, bordes finos, brillo suave.
+   */
+  .tactical-web-strip {
+    background: linear-gradient(180deg, rgba(8, 12, 18, 0.97) 0%, rgba(5, 8, 12, 0.92) 100%);
+    border-bottom: 1px solid rgba(34, 211, 238, 0.18);
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.04) inset,
+      0 8px 32px rgba(0, 0, 0, 0.45);
+  }
+
+  .tactical-title-glow {
+    text-shadow:
+      0 0 18px rgba(34, 211, 238, 0.35),
+      0 0 36px rgba(0, 212, 255, 0.12);
+  }
+
+  .tactical-map-frame {
+    border: 1px solid rgba(34, 211, 238, 0.14);
+    background: rgba(0, 0, 0, 0.25);
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.5) inset,
+      0 0 48px rgba(0, 212, 255, 0.04),
+      0 12px 40px rgba(0, 0, 0, 0.35);
+  }
+
+  .tactical-panel-rail {
+    background: linear-gradient(180deg, rgba(8, 10, 14, 0.96) 0%, rgba(5, 7, 11, 0.98) 100%);
+    border-left: 1px solid rgba(34, 211, 238, 0.12);
+    box-shadow: -6px 0 32px rgba(0, 0, 0, 0.4);
+  }
+
+  .tactical-toggle-idle {
+    @apply border bg-black/40 font-mono uppercase tracking-wide transition-all duration-200;
+    border-color: rgba(34, 211, 238, 0.12);
+    color: rgb(107 114 128);
+  }
+
+  .tactical-toggle-idle:hover {
+    border-color: rgba(34, 211, 238, 0.22);
+    color: rgb(209 213 219);
+  }
+
+  /** Rejilla táctica sobre el mapa (solo escritorio, encima de tiles). */
+  .tactical-map-grid-overlay {
+    background-image:
+      linear-gradient(rgba(0, 242, 255, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 242, 255, 0.045) 1px, transparent 1px);
+    background-size: 40px 40px;
+    background-position: center top;
+  }
+
+  /** Paneles flotantes HUD (vidrio + borde cian). */
+  .tactical-hud-glass {
+    background: rgba(5, 7, 11, 0.78);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(0, 242, 255, 0.14);
+    box-shadow:
+      0 0 32px rgba(0, 0, 0, 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .tactical-label-muted {
+    @apply font-mono text-[9px] uppercase tracking-[0.14em];
+    color: rgba(100, 116, 139, 0.95);
+  }
+
+  .tactical-data-glow {
+    color: rgba(0, 242, 255, 0.92);
+    text-shadow: 0 0 10px rgba(0, 242, 255, 0.35);
+  }
+
   .glass-card {
     @apply bg-shadow-800/60 backdrop-blur-xl border border-white/5 rounded-xl;
     box-shadow:
@@ -79,14 +154,14 @@
   .input-territory-search {
     color: #f3f4f6 !important;
     -webkit-text-fill-color: #f3f4f6;
-    background-color: #0c1018 !important;
-    caret-color: #38bdf8;
+    background-color: rgba(6, 10, 14, 0.94) !important;
+    caret-color: #22d3ee;
     color-scheme: dark;
   }
 
   .input-territory-search::placeholder {
-    color: #6b7280 !important;
-    -webkit-text-fill-color: #6b7280;
+    color: rgba(34, 211, 238, 0.42) !important;
+    -webkit-text-fill-color: rgba(34, 211, 238, 0.42);
     opacity: 1;
   }
 
@@ -94,10 +169,10 @@
   .input-territory-search:-webkit-autofill:hover,
   .input-territory-search:-webkit-autofill:focus,
   .input-territory-search:-webkit-autofill:active {
-    -webkit-box-shadow: 0 0 0 1000px #0c1018 inset !important;
-    box-shadow: 0 0 0 1000px #0c1018 inset !important;
+    -webkit-box-shadow: 0 0 0 1000px rgba(6, 10, 14, 0.94) inset !important;
+    box-shadow: 0 0 0 1000px rgba(6, 10, 14, 0.94) inset !important;
     -webkit-text-fill-color: #f3f4f6 !important;
-    caret-color: #38bdf8;
+    caret-color: #22d3ee;
     transition: background-color 99999s ease-out;
   }
 }
