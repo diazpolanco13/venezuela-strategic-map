@@ -31,7 +31,7 @@ Requiere Node con soporte para TypeScript en el módulo de configuración según
 
 - **Capa dedicada Leaflet:** `venEsequibo` (pane propio), siempre **inmediatamente por encima** del pane de estados en el modelo de z-index derivado del orden de capas (ver `mapLayerStack.ts`).
 - El estilo del polígono depende de qué capas “lógicas” están activas: neutro, REDI, estilo tipo municipio, tipo parroquia, etc. (detalle en [04-capas-leaflet-y-gestor.md](./04-capas-leaflet-y-gestor.md)).
-- La capa de **parroquias** no incluye geometrías ADM3 dentro del Esequiba en la fuente actual; el mapa dibuja la **silueta** de Esequiba con el mismo lenguaje visual que las parroquias cuando solo esa capa (o la combinación definida) lo requiere.
+- La capa de **parroquias** no incluye geometrías ADM3 dentro del Esequiba en la fuente actual. El mapa dibuja una **silueta** dedicada en `venEsequibo`: con **solo parroquias** activas usa el lenguaje visual de parroquias; si **municipios** están activos (con o sin parroquias), esa silueta usa el de municipios para no contrastar con el resto del territorio (ver prioridad en [04-capas-leaflet-y-gestor.md](./04-capas-leaflet-y-gestor.md)).
 
 ## Fuente de los límites ADM
 

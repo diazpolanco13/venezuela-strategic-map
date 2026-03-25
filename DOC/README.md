@@ -9,7 +9,7 @@ Mapa interactivo de Venezuela (React + Leaflet) con capas administrativas (ADM1�
 | [01-visión-general.md](./01-visión-general.md) | Qué hace el proyecto, stack tecnológico, características principales |
 | [02-estructura-del-repositorio.md](./02-estructura-del-repositorio.md) | Árbol de carpetas, archivos de entrada, empaquetado |
 | [03-datos-geográficos.md](./03-datos-geográficos.md) | GeoJSON en `public/geo/`, silueta país, Esequiba, script `build:outline` |
-| [04-capas-leaflet-y-gestor.md](./04-capas-leaflet-y-gestor.md) | Panes, z-index, REDI, estilos Esequiba por capa activa, `MapLayerManager` |
+| [04-capas-leaflet-y-gestor.md](./04-capas-leaflet-y-gestor.md) | Panes, z-index, REDI, prioridad de estilo Esequiba (REDI / municipios / parroquias), `MapLayerManager` |
 | [05-api-venezuelamap.md](./05-api-venezuelamap.md) | Props, tipos, `ui`, callbacks, métricas genéricas |
 | [06-desarrollo-y-build.md](./06-desarrollo-y-build.md) | Scripts npm, Vite, TypeScript, comprobaciones locales |
 | [07-despliegue-dokploy.md](./07-despliegue-dokploy.md) | Docker, nginx, Dokploy, subrutas (`VITE_BASE`) |

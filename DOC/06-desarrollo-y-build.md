@@ -30,7 +30,7 @@ Tailwind escanea típicamente `src/**` y plantillas según `tailwind.config`; al
 
 ## Pruebas manuales sugeridas
 
-- Conmutar cada capa (país, estados, municipios, parroquias, REDI) y comprobar Esequiba y leyenda.
+- Conmutar cada capa (país, estados, municipios, parroquias, REDI) y comprobar Esequiba y leyenda (con **municipios + parroquias** a la vez, la silueta del Esequiba debe verse alineada al estilo de municipios, no “solo parroquia”).
 - Reordenar capas en el gestor y verificar el apilamiento (p. ej. parroquias sobre municipios).
 - Búsqueda territorial: estado, municipio, parroquia.
 - Si `showGeolocation` está activo: permisos del navegador y respuesta de Nominatim.

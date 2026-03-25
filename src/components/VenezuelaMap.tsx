@@ -2173,7 +2173,7 @@ export function VenezuelaMap({
 
               {(showStatesLayer || showRediLayer || showMunicipalities || showParishes) && (
                 <GeoJSON
-                  key={`esequibo-${showRediLayer ? 'r' : showParishes ? 'p' : showMunicipalities ? 'm' : 'n'}-${myLocVisualIsolate ? 'd' : 'n'}`}
+                  key={`esequibo-${showRediLayer ? 'r' : showMunicipalities ? 'm' : showParishes ? 'p' : 'n'}-${myLocVisualIsolate ? 'd' : 'n'}`}
                   data={ESEQUIBO_GEOJSON}
                   pane="venEsequibo"
                   style={() => {
@@ -2186,11 +2186,12 @@ export function VenezuelaMap({
                         opacity: myLocVisualIsolate ? 0.35 : 0.85,
                       }
                     }
-                    if (showParishes) {
-                      return getEsequiboParishSilhouetteStyle()
-                    }
+                    /** Municipios antes que parroquias: si ambas están activas, la silueta sigue la capa ADM2 (no hay parroquias reales en este GeoJSON). */
                     if (showMunicipalities) {
                       return getEsequiboMunicipalitySilhouetteStyle()
+                    }
+                    if (showParishes) {
+                      return getEsequiboParishSilhouetteStyle()
                     }
                     return {
                       fillColor: '#64748b',
@@ -2203,10 +2204,10 @@ export function VenezuelaMap({
                   onEachFeature={
                     showRediLayer
                       ? onEachEsequiboRedi
-                      : showParishes
-                        ? onEachEsequiboAsParish
-                        : showMunicipalities
-                          ? onEachEsequiboAsMunicipality
+                      : showMunicipalities
+                        ? onEachEsequiboAsMunicipality
+                        : showParishes
+                          ? onEachEsequiboAsParish
                           : onEachEsequiboNeutral
                   }
                 />

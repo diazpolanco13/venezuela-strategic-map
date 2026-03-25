@@ -38,7 +38,11 @@ Resumen de comportamiento (simplificado):
 - **Estados:** modo neutro (sin REDI) o sustituidos visualmente cuando REDI está activo (los estados “REDI” van a otro pane).
 - **Municipios / parroquias:** estilos distintos (púrpura vs cyan), etiquetas según nivel de zoom.
 - **REDI:** colores por estado según `src/config/redi.ts`; leyenda en UI cuando aplica.
-- **Esequiba:** un único feature; tooltip y hover coherentes con el modo activo (neutro, REDI, “como municipio”, “como parroquia”, etc.).
+- **Esequiba:** un único `GeoJSON` en `venEsequibo` (no hay ADM2/ADM3 reales en esa fuente). El estilo y los handlers (`onEachFeature`) siguen esta **prioridad** si varias capas lógicas están encendidas:
+  1. **REDI** activo → estilo y eventos REDI.
+  2. **Municipios** activos → estilo “como municipio” (aunque parroquias también estén activas), para alinear el relleno con el resto del país donde ADM2 queda bajo la rejilla ADM3.
+  3. Solo **parroquias** (sin municipios) → estilo “como parroquia”.
+  4. En otro caso (p. ej. solo estados) → neutro.
 
 ## Teselas base
 
