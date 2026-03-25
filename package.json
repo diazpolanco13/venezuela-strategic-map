@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:outline": "node --experimental-strip-types scripts/build-ven-outline.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.9",
+    "@turf/turf": "^7.3.4",
     "@types/leaflet": "^1.9.21",
     "@types/react": "^18.3.14",
     "@types/react-dom": "^18.3.3",

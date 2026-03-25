@@ -4,18 +4,19 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  MapPin, Building2, Users, ChevronRight, ChevronLeft, ChevronDown,
-  Shield, Globe, Eye, Skull, X, Loader2, Layers, LayoutGrid, Search,
-  Navigation, Clipboard, Share2, PanelRight,
+  MapPin, Users, ChevronRight, ChevronLeft, ChevronDown,
+  Eye, Hash, X, Loader2, Layers, LayoutGrid, Search,
+  Navigation, Clipboard, Share2, PanelRight, Globe2, Map as MapIcon, Waypoints,
 } from 'lucide-react'
 import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap } from 'react-leaflet'
 import type { Layer } from 'leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
+import { DEFAULT_VENEZUELA_GEO_URLS } from '../config/mapAssets'
 import { REDI_COLORS, REDI_ORDER, getStateRedi, normalizeName } from '../config/redi'
 import { ESEQUIBO_GEOJSON } from '../config/esequibo'
-import type { StateData, MapMarker, TerritorialSummary, VenezuelaMapProps } from '../config/types'
+import type { StateData, MapMarker, VenezuelaMapProps } from '../config/types'
 import type { ReverseGeoDetail } from '../utils/nominatim'
 import {
   formatDeviceCaptureDateTime,
@@ -28,6 +29,13 @@ import {
   findParishContaining,
   municipalityGidFromParishParent,
 } from '../utils/geoHitTest'
+import {
+  computePaneZIndices,
+  DEFAULT_MAP_LAYER_ORDER,
+  normalizeLayerOrder,
+  type StackableMapLayerId,
+} from '../config/mapLayerStack'
+import { MapLayerManager, type MapLayerVisibility } from './MapLayerManager'
 import {
   buildTerritoryIndex,
   searchTerritory,
@@ -50,10 +58,6 @@ type MapFlyRequest =
       duration?: number
     }
 
-const STATES_GEOJSON_URL = '/geo/ven-states.json'
-const MUNICIPALITIES_GEOJSON_URL = '/geo/ven-municipalities.json'
-/** Límites ADM3 — OCHA/HDX COD-AB (ven_admin3) */
-const PARISHES_GEOJSON_URL = '/geo/ven-parishes.json'
 const REDI_GUAYANA_COLOR = REDI_COLORS['REDI GUAYANA']
 
 function muniExpandKey(stateId: string, muniNorm: string) {
@@ -121,12 +125,32 @@ function MapInvalidateWhenSidebarChanges({ sidebarOpen }: { sidebarOpen: boolean
   return null
 }
 
+/** Aplica z-index por pane según el orden de capas definido por el usuario. */
+function MapLayerPanes({ zByPane }: { zByPane: Record<string, string> }) {
+  const map = useMap()
+  useEffect(() => {
+    const names = ['venCountry', 'venStates', 'venEsequibo', 'venMuni', 'venParish', 'venRedi'] as const
+    for (const name of names) {
+      const el = map.getPane(name) ?? map.createPane(name)
+      const z = zByPane[name]
+      if (z != null) el.style.zIndex = z
+      if (name === 'venCountry') el.style.pointerEvents = 'none'
+      else el.style.pointerEvents = ''
+    }
+  }, [map, zByPane])
+  return null
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+}
+
+function metricValue(state: StateData, metricId: string): number {
+  return state.metrics?.find(m => m.id === metricId)?.value ?? 0
 }
 
 /** Nombres GADM (p. ej. AltoOrinoco) → texto legible */
@@ -138,26 +162,32 @@ function formatMunicipalityName(raw: string): string {
 }
 
 function RediLegendInner({
+  showRediLayer,
   showMunicipalities,
   showParishes,
 }: {
+  showRediLayer: boolean
   showMunicipalities: boolean
   showParishes: boolean
 }) {
   return (
     <>
-      <span className="text-[9px] text-gray-500 font-mono block mb-1.5">REDI — Regiones Estratégicas</span>
-      <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-x-3 gap-y-1.5">
-        {REDI_ORDER.map(redi => (
-          <div key={redi} className="flex items-start gap-1.5 min-w-0">
-            <div
-              className="w-2 h-2 rounded-sm flex-shrink-0 mt-0.5"
-              style={{ background: REDI_COLORS[redi], boxShadow: `0 0 4px ${REDI_COLORS[redi]}66` }}
-            />
-            <span className="text-[8px] text-gray-400 leading-snug break-words">{redi}</span>
+      {showRediLayer && (
+        <>
+          <span className="text-[9px] text-gray-500 font-mono block mb-1.5">REDI — Regiones Estratégicas</span>
+          <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-x-3 gap-y-1.5">
+            {REDI_ORDER.map(redi => (
+              <div key={redi} className="flex items-start gap-1.5 min-w-0">
+                <div
+                  className="w-2 h-2 rounded-sm flex-shrink-0 mt-0.5"
+                  style={{ background: REDI_COLORS[redi], boxShadow: `0 0 4px ${REDI_COLORS[redi]}66` }}
+                />
+                <span className="text-[8px] text-gray-400 leading-snug break-words">{redi}</span>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </>
+      )}
       {showMunicipalities && (
         <div className="mt-1.5 pt-1.5 border-t border-white/5 space-y-1">
           <div className="text-[8px] text-neon-purple font-mono">Capa municipios · clic o hover</div>
@@ -174,32 +204,84 @@ function RediLegendInner({
           </div>
         </div>
       )}
-      <div className="mt-1.5 pt-1.5 border-t border-white/5 flex items-start gap-1.5">
-        <div
-          className="w-3 h-2 rounded-sm flex-shrink-0 mt-0.5"
-          style={{ background: REDI_GUAYANA_COLOR, boxShadow: `0 0 6px ${REDI_GUAYANA_COLOR}66` }}
-        />
-        <span
-          className="text-[7px] sm:text-[8px] font-mono leading-snug break-words"
-          style={{ color: REDI_GUAYANA_COLOR }}
-        >
-          Guayana Esequiba · REDI GUAYANA
-        </span>
-      </div>
+      {showRediLayer && (
+        <div className="mt-1.5 pt-1.5 border-t border-white/5 flex items-start gap-1.5">
+          <div
+            className="w-3 h-2 rounded-sm flex-shrink-0 mt-0.5"
+            style={{ background: REDI_GUAYANA_COLOR, boxShadow: `0 0 6px ${REDI_GUAYANA_COLOR}66` }}
+          />
+          <span
+            className="text-[7px] sm:text-[8px] font-mono leading-snug break-words"
+            style={{ color: REDI_GUAYANA_COLOR }}
+          >
+            Guayana Esequiba · REDI GUAYANA
+          </span>
+        </div>
+      )}
+      {!showRediLayer && !showMunicipalities && !showParishes && (
+        <p className="text-[8px] text-gray-500 font-mono leading-snug mt-1">
+          Activa «REDI» para ver la agrupación estratégica. «Estados» muestra límites sin colores REDI.
+        </p>
+      )}
     </>
   )
 }
 
 export function VenezuelaMap({
   stateData,
-  summary,
+  summaryMetrics,
   markers = [],
   onStateClick,
   onStateNavigate,
+  showCountrySilhouetteDefault = true,
+  showStatesLayerDefault = false,
+  showRediLayerDefault = false,
   showMunicipalitiesDefault = false,
   showMarkersDefault = true,
   className = '',
+  mapTitle = 'TERRITORIO VENEZUELA',
+  mapSubtitle = 'Mapa estratégico',
+  geoUrls: geoUrlsProp,
+  ui = {},
 }: VenezuelaMapProps) {
+  const geo = useMemo(
+    () => ({
+      countryOutline:
+        geoUrlsProp?.countryOutline ?? DEFAULT_VENEZUELA_GEO_URLS.countryOutline,
+      states: geoUrlsProp?.states ?? DEFAULT_VENEZUELA_GEO_URLS.states,
+      municipalities: geoUrlsProp?.municipalities ?? DEFAULT_VENEZUELA_GEO_URLS.municipalities,
+      parishes: geoUrlsProp?.parishes ?? DEFAULT_VENEZUELA_GEO_URLS.parishes,
+    }),
+    [
+      geoUrlsProp?.countryOutline,
+      geoUrlsProp?.states,
+      geoUrlsProp?.municipalities,
+      geoUrlsProp?.parishes,
+    ],
+  )
+
+  const summaryToolbarItems = summaryMetrics ?? []
+
+  const showSummaryToolbar =
+    summaryToolbarItems.length > 0 && ui.showSummaryToolbar !== false
+  const showTerritoryPanel = ui.showTerritoryPanel !== false
+  const showMapSearch = ui.showMapSearch !== false
+  const showGeolocation = ui.showGeolocation !== false
+
+  const metricSortOptions = useMemo(() => {
+    const labels = new Map<string, string>()
+    for (const s of stateData) {
+      for (const m of s.metrics ?? []) {
+        if (!labels.has(m.id)) labels.set(m.id, m.label)
+      }
+    }
+    return [...labels.entries()]
+  }, [stateData])
+
+  useEffect(() => {
+    if (!showTerritoryPanel) setSidebarOpen(false)
+  }, [showTerritoryPanel])
+
   const [selectedState, setSelectedState] = useState<StateData | null>(null)
   const [selectedMunicipality, setSelectedMunicipality] = useState<{
     gid: string
@@ -217,7 +299,14 @@ export function VenezuelaMap({
   selectedMunicipalityRef.current = selectedMunicipality
   const selectedParishRef = useRef(selectedParish)
   selectedParishRef.current = selectedParish
-  const [sortBy, setSortBy] = useState<'org_count' | 'person_count' | 'name'>('org_count')
+  const [sortBy, setSortBy] = useState<string>('name')
+
+  useEffect(() => {
+    if (sortBy.startsWith('metric:')) {
+      const id = sortBy.slice('metric:'.length)
+      if (!metricSortOptions.some(([mid]) => mid === id)) setSortBy('name')
+    }
+  }, [metricSortOptions, sortBy])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [territorialSearchQuery, setTerritorialSearchQuery] = useState('')
   const [mapSearchOpen, setMapSearchOpen] = useState(false)
@@ -230,10 +319,16 @@ export function VenezuelaMap({
   const [rediLegendMobileOpen, setRediLegendMobileOpen] = useState(false)
 
   const [statesGeo, setStatesGeo] = useState<any>(null)
+  const [countryOutlineGeo, setCountryOutlineGeo] = useState<any>(null)
   const [muniGeo, setMuniGeo] = useState<any>(null)
   const [geoLoading, setGeoLoading] = useState(true)
+  const [showCountrySilhouette, setShowCountrySilhouette] = useState(showCountrySilhouetteDefault)
+  const [showStatesLayer, setShowStatesLayer] = useState(showStatesLayerDefault)
+  const [showRediLayer, setShowRediLayer] = useState(showRediLayerDefault)
   const [showMunicipalities, setShowMunicipalities] = useState(showMunicipalitiesDefault)
   const [showParishes, setShowParishes] = useState(false)
+  const [layerOrder, setLayerOrder] = useState<StackableMapLayerId[]>(() => [...DEFAULT_MAP_LAYER_ORDER])
+  const [layersPanelOpen, setLayersPanelOpen] = useState(false)
   const [parishGeo, setParishGeo] = useState<any>(null)
   const [parishesLoading, setParishesLoading] = useState(false)
 
@@ -264,24 +359,76 @@ export function VenezuelaMap({
     [myLocation, myLocParishPcode, myLocMuniGid],
   )
 
+  const safeLayerOrder = useMemo(() => normalizeLayerOrder(layerOrder), [layerOrder])
+
+  useEffect(() => {
+    const fixed = normalizeLayerOrder(layerOrder)
+    if (
+      fixed.length !== layerOrder.length ||
+      fixed.some((id, i) => id !== layerOrder[i])
+    ) {
+      setLayerOrder(fixed)
+    }
+  }, [layerOrder])
+
+  const paneZIndices = useMemo(() => computePaneZIndices(safeLayerOrder), [safeLayerOrder])
+
+  const layerVisibility = useMemo<MapLayerVisibility>(
+    () => ({
+      country: showCountrySilhouette,
+      states: showStatesLayer,
+      municipalities: showMunicipalities,
+      parishes: showParishes,
+      redi: showRediLayer,
+    }),
+    [showCountrySilhouette, showStatesLayer, showMunicipalities, showParishes, showRediLayer],
+  )
+
+  const onLayerVisibilityChange = useCallback((key: keyof MapLayerVisibility, visible: boolean) => {
+    switch (key) {
+      case 'country':
+        setShowCountrySilhouette(visible)
+        break
+      case 'states':
+        setShowStatesLayer(visible)
+        break
+      case 'municipalities':
+        setShowMunicipalities(visible)
+        break
+      case 'parishes':
+        setShowParishes(visible)
+        break
+      case 'redi':
+        setShowRediLayer(visible)
+        break
+    }
+  }, [])
+
   useEffect(() => {
     if (stateData.length === 0) return
     setGeoLoading(true)
-    fetchGeoJSON(STATES_GEOJSON_URL)
-      .then(data => {
-        setStatesGeo(data)
+    Promise.all([
+      fetchGeoJSON(geo.states),
+      fetchGeoJSON(geo.countryOutline).catch(err => {
+        console.warn('Silueta país (ven-outline.json). Ejecuta npm run build:outline —', err)
+        return null
+      }),
+    ])
+      .then(([statesData, outlineData]) => {
+        setStatesGeo(statesData)
+        setCountryOutlineGeo(outlineData)
         setGeoKey(k => k + 1)
       })
       .catch(err => console.error('Error GeoJSON estados:', err))
       .finally(() => setGeoLoading(false))
-  }, [stateData])
+  }, [stateData.length, geo.states, geo.countryOutline])
 
   useEffect(() => {
     if (muniGeo) return
-    fetchGeoJSON(MUNICIPALITIES_GEOJSON_URL)
+    fetchGeoJSON(geo.municipalities)
       .then(setMuniGeo)
       .catch(err => console.error('Error GeoJSON municipios:', err))
-  }, [muniGeo])
+  }, [muniGeo, geo.municipalities])
 
   const wantParishGeo = showParishes || parishIndexWanted
 
@@ -292,11 +439,11 @@ export function VenezuelaMap({
   useEffect(() => {
     if (!wantParishGeo || parishGeo) return
     setParishesLoading(true)
-    fetchGeoJSON(PARISHES_GEOJSON_URL)
+    fetchGeoJSON(geo.parishes)
       .then(setParishGeo)
       .catch(err => console.error('Error GeoJSON parroquias:', err))
       .finally(() => setParishesLoading(false))
-  }, [wantParishGeo, parishGeo])
+  }, [wantParishGeo, parishGeo, geo.parishes])
 
   const territoryIndex = useMemo(() => buildTerritoryIndex(muniGeo, parishGeo), [muniGeo, parishGeo])
 
@@ -340,9 +487,7 @@ export function VenezuelaMap({
     const stat = findStat(name)
     const redi = stat ? getStateRedi(stat.name) : getStateRedi(name)
     const color = REDI_COLORS[redi] || '#6b7280'
-    const orgCount = stat?.org_count || 0
-
-    const baseOp = orgCount > 0 ? 0.3 : 0.15
+    const baseOp = stat ? 0.25 : 0.15
     return {
       fillColor: color,
       fillOpacity: myLocVisualIsolate ? baseOp * 0.22 : baseOp,
@@ -352,54 +497,138 @@ export function VenezuelaMap({
     }
   }, [findStat, myLocVisualIsolate])
 
-  const onEachState = useCallback((feature: any, layer: Layer) => {
-    const name = feature?.properties?.NAME_1 || ''
-    const stat = findStat(name)
+  const neutralStateStyle = useCallback(
+    (_feature: any) => ({
+      fillColor: '#64748b',
+      fillOpacity: myLocVisualIsolate ? 0.04 : 0.15,
+      color: 'rgba(226, 232, 240, 0.38)',
+      weight: 1.1,
+      opacity: myLocVisualIsolate ? 0.4 : 0.8,
+    }),
+    [myLocVisualIsolate],
+  )
 
-    if (stat) {
-      layer.bindTooltip(
-        `<div style="font-family:monospace;font-size:11px">
-          <strong>${stat.name}</strong><br/>
-          <span style="color:#ff3366">${stat.org_count} orgs</span> · 
-          <span style="color:#00d4ff">${stat.person_count} personas</span>
-        </div>`,
-        { sticky: true, className: 'centinela-tooltip' }
+  const bindStateLayerEvents = useCallback(
+    (
+      feature: any,
+      layer: Layer,
+      resetStyle: (f: any) => Record<string, unknown>,
+    ) => {
+      const name = feature?.properties?.NAME_1 || ''
+      const stat = findStat(name)
+
+      if (stat) {
+        const lines = [`<strong>${escapeHtml(stat.name)}</strong>`]
+        for (const m of stat.metrics ?? []) {
+          if (m.value > 0) {
+            lines.push(
+              `<br/><span style="color:#94a3b8">${escapeHtml(m.label)}: ${m.value}</span>`,
+            )
+          }
+        }
+        layer.bindTooltip(
+          `<div style="font-family:monospace;font-size:11px">${lines.join('')}</div>`,
+          { sticky: true, className: 'centinela-tooltip' },
+        )
+      }
+
+      layer.on('mouseover', () => {
+        ;(layer as any).setStyle?.({
+          fillOpacity: 0.42,
+          weight: 2.35,
+          color: '#f8fafc',
+          opacity: 1,
+        })
+        ;(layer as L.Path).bringToFront()
+      })
+      layer.on('mouseout', () => {
+        ;(layer as any).setStyle?.(resetStyle(feature))
+      })
+      layer.on('click', () => {
+        if (stat) {
+          setSelectedParish(null)
+          setSelectedMunicipality(null)
+          setSelectedState(stat)
+          onStateClick?.(stat)
+          if (stat.geo_center) {
+            setFlyTarget({ kind: 'point', center: [stat.geo_center.lat, stat.geo_center.lng], zoom: 7 })
+          }
+        }
+      })
+    },
+    [findStat, onStateClick],
+  )
+
+  const onEachStateNeutral = useCallback(
+    (feature: any, layer: Layer) => bindStateLayerEvents(feature, layer, neutralStateStyle),
+    [bindStateLayerEvents, neutralStateStyle],
+  )
+
+  const onEachStateRedi = useCallback(
+    (feature: any, layer: Layer) => bindStateLayerEvents(feature, layer, stateStyle),
+    [bindStateLayerEvents, stateStyle],
+  )
+
+  const onEachEsequiboNeutral = useCallback((_feature: any, layer: Layer) => {
+    const eseqStat = stateData.find(s => s.name === 'Guayana Esequiba')
+    const eseqMetricLines = (eseqStat?.metrics ?? [])
+      .filter(m => m.value > 0)
+      .map(
+        m =>
+          `<br/><span style="color:#94a3b8">${escapeHtml(m.label)}: ${m.value}</span>`,
       )
-    }
-
+      .join('')
+    layer.bindTooltip(
+      `<div style="font-family:monospace;font-size:11px">
+        <strong>Guayana Esequiba</strong><br/>
+        <span style="color:#94a3b8;font-size:10px">Zona en reclamación · mismo estilo que estados</span>${eseqMetricLines}<br/>
+        <span style="color:#64748b;font-size:10px">159.542 km²</span>
+      </div>`,
+      { sticky: true, className: 'centinela-tooltip' },
+    )
     layer.on('mouseover', () => {
-      (layer as any).setStyle?.({
-        fillOpacity: 0.5,
-        weight: 2.5,
-        color: '#ffffff',
+      ;(layer as any).setStyle({
+        fillColor: '#94a3b8',
+        fillOpacity: 0.35,
+        weight: 2,
+        color: '#e2e8f0',
         opacity: 1,
       })
       ;(layer as L.Path).bringToFront()
     })
     layer.on('mouseout', () => {
-      (layer as any).setStyle?.(stateStyle(feature))
+      ;(layer as any).setStyle({
+        fillColor: '#64748b',
+        fillOpacity: 0.14,
+        weight: 1.2,
+        color: 'rgba(226, 232, 240, 0.45)',
+        opacity: 0.85,
+      })
     })
     layer.on('click', () => {
-      if (stat) {
+      if (eseqStat) {
         setSelectedParish(null)
         setSelectedMunicipality(null)
-        setSelectedState(stat)
-        onStateClick?.(stat)
-        if (stat.geo_center) {
-          setFlyTarget({ kind: 'point', center: [stat.geo_center.lat, stat.geo_center.lng], zoom: 7 })
-        }
+        setSelectedState(eseqStat)
+        onStateClick?.(eseqStat)
+        setFlyTarget({ kind: 'point', center: [5.5, -59.2], zoom: 6 })
       }
     })
-  }, [findStat, stateStyle, onStateClick])
+  }, [stateData, onStateClick])
 
-  const onEachEsequibo = useCallback((_feature: any, layer: Layer) => {
+  const onEachEsequiboRedi = useCallback((_feature: any, layer: Layer) => {
     const eseqStat = stateData.find(s => s.name === 'Guayana Esequiba')
+    const eseqMetricLines = (eseqStat?.metrics ?? [])
+      .filter(m => m.value > 0)
+      .map(
+        m =>
+          `<br/><span style="color:#94a3b8">${escapeHtml(m.label)}: ${m.value}</span>`,
+      )
+      .join('')
     layer.bindTooltip(
       `<div style="font-family:monospace;font-size:11px">
         <strong style="color:${REDI_GUAYANA_COLOR}">Guayana Esequiba</strong><br/>
-        <span style="color:#6ee7b7;font-size:10px">REDI GUAYANA</span><br/>
-        <span style="color:#ff3366">${eseqStat?.org_count || 0} orgs</span> · 
-        <span style="color:#00d4ff">${eseqStat?.person_count || 0} personas</span><br/>
+        <span style="color:#6ee7b7;font-size:10px">REDI GUAYANA</span>${eseqMetricLines}<br/>
         <span style="color:#64748b;font-size:10px">159.542 km²</span>
       </div>`,
       { sticky: true, className: 'centinela-tooltip' }
@@ -424,6 +653,134 @@ export function VenezuelaMap({
       })
     })
     layer.on('click', () => {
+      if (eseqStat) {
+        setSelectedParish(null)
+        setSelectedMunicipality(null)
+        setSelectedState(eseqStat)
+        onStateClick?.(eseqStat)
+        setFlyTarget({ kind: 'point', center: [5.5, -59.2], zoom: 6 })
+      }
+    })
+  }, [stateData, onStateClick])
+
+  /** Misma paleta que municipios (ADM2) para silueta Esequiba sin GeoJSON municipal. */
+  const getEsequiboMunicipalitySilhouetteStyle = useCallback(() => {
+    if (myLocVisualIsolate) {
+      return {
+        fillColor: 'rgba(88, 28, 135, 0.04)',
+        fillOpacity: 0.4,
+        color: 'rgba(167, 139, 250, 0.12)',
+        weight: 0.35,
+        opacity: 0.42,
+      }
+    }
+    return {
+      fillColor: 'rgba(168, 85, 247, 0.06)',
+      fillOpacity: 1,
+      color: 'rgba(167, 139, 250, 0.42)',
+      weight: 0.9,
+      opacity: 0.88,
+    }
+  }, [myLocVisualIsolate])
+
+  const getEsequiboMuniStyleRef = useRef(getEsequiboMunicipalitySilhouetteStyle)
+  getEsequiboMuniStyleRef.current = getEsequiboMunicipalitySilhouetteStyle
+
+  const onEachEsequiboAsMunicipality = useCallback((_feature: any, layer: Layer) => {
+    const eseqStat = stateData.find(s => s.name === 'Guayana Esequiba')
+    const eseqMetricLines = (eseqStat?.metrics ?? [])
+      .filter(m => m.value > 0)
+      .map(
+        m =>
+          `<br/><span style="color:#e9d5ff">${escapeHtml(m.label)}: ${m.value}</span>`,
+      )
+      .join('')
+    layer.bindTooltip(
+      `<div class="muni-hover-inner" style="font-family:monospace;font-size:11px">
+          <span class="muni-hover-name">Guayana Esequiba</span>
+          <span class="muni-hover-state">Sin división municipal en capa · silueta mismo estilo que municipios</span>${eseqMetricLines}
+        </div>`,
+      { sticky: true, className: 'muni-tooltip-hover' },
+    )
+    layer.on('mouseover', () => {
+      ;(layer as L.Path).setStyle({
+        fillColor: 'rgba(192, 132, 252, 0.2)',
+        fillOpacity: 0.55,
+        color: '#e879f9',
+        weight: 1.85,
+        opacity: 1,
+      })
+      ;(layer as L.Path).bringToFront()
+    })
+    layer.on('mouseout', () => {
+      ;(layer as L.Path).setStyle(getEsequiboMuniStyleRef.current())
+    })
+    layer.on('click', (e: L.LeafletMouseEvent) => {
+      L.DomEvent.stopPropagation(e)
+      if (eseqStat) {
+        setSelectedParish(null)
+        setSelectedMunicipality(null)
+        setSelectedState(eseqStat)
+        onStateClick?.(eseqStat)
+        setFlyTarget({ kind: 'point', center: [5.5, -59.2], zoom: 6 })
+      }
+    })
+  }, [stateData, onStateClick])
+
+  /** Misma paleta que parroquias (ADM3) cuando no hay subdivisión Esequiba en la capa. */
+  const getEsequiboParishSilhouetteStyle = useCallback(() => {
+    if (myLocVisualIsolate) {
+      return {
+        fillColor: 'rgba(8, 47, 73, 0.06)',
+        fillOpacity: 0.35,
+        color: 'rgba(34, 211, 238, 0.1)',
+        weight: 0.3,
+        opacity: 0.38,
+      }
+    }
+    return {
+      fillColor: 'rgba(34, 211, 238, 0.04)',
+      fillOpacity: 1,
+      color: 'rgba(34, 211, 238, 0.38)',
+      weight: 0.55,
+      opacity: 0.82,
+    }
+  }, [myLocVisualIsolate])
+
+  const getEsequiboParishStyleRef = useRef(getEsequiboParishSilhouetteStyle)
+  getEsequiboParishStyleRef.current = getEsequiboParishSilhouetteStyle
+
+  const onEachEsequiboAsParish = useCallback((_feature: any, layer: Layer) => {
+    const eseqStat = stateData.find(s => s.name === 'Guayana Esequiba')
+    const eseqMetricLines = (eseqStat?.metrics ?? [])
+      .filter(m => m.value > 0)
+      .map(
+        m =>
+          `<br/><span style="color:#a5f3fc">${escapeHtml(m.label)}: ${m.value}</span>`,
+      )
+      .join('')
+    layer.bindTooltip(
+      `<div class="parish-hover-inner" style="font-family:monospace;font-size:11px">
+          <span class="parish-hover-name">Guayana Esequiba</span>
+          <span class="parish-hover-muni">Sin parroquias en esta capa · silueta mismo estilo que parroquias</span>${eseqMetricLines}
+        </div>`,
+      { sticky: true, className: 'parish-tooltip-hover' },
+    )
+    layer.on('mouseover', () => {
+      ;(layer as L.Path).setStyle({
+        fillColor: 'rgba(34, 211, 238, 0.14)',
+        fillOpacity: 0.5,
+        color: '#22d3ee',
+        weight: 1.5,
+        opacity: 1,
+      })
+      ;(layer as L.Path).bringToFront()
+    })
+    layer.on('mouseout', () => {
+      ;(layer as L.Path).setStyle(getEsequiboParishStyleRef.current())
+    })
+    layer.on('click', (e: L.LeafletMouseEvent) => {
+      L.DomEvent.stopPropagation(e)
       if (eseqStat) {
         setSelectedParish(null)
         setSelectedMunicipality(null)
@@ -887,7 +1244,11 @@ export function VenezuelaMap({
 
     const sortFn = (a: StateData, b: StateData) => {
       if (sortBy === 'name') return a.name.localeCompare(b.name)
-      return (b[sortBy] || 0) - (a[sortBy] || 0)
+      if (sortBy.startsWith('metric:')) {
+        const id = sortBy.slice('metric:'.length)
+        return metricValue(b, id) - metricValue(a, id)
+      }
+      return 0
     }
     for (const key of Object.keys(groups)) {
       groups[key].sort(sortFn)
@@ -902,12 +1263,38 @@ export function VenezuelaMap({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pb-2 flex-shrink-0 min-w-0">
         <div className="flex items-center gap-2 min-w-0">
           <MapPin className="w-4 h-4 sm:w-5 sm:h-5 text-neon-blue flex-shrink-0" />
-          <h1 className="text-sm sm:text-base font-display font-bold text-white truncate">TERRITORIO VENEZUELA</h1>
-          <span className="text-[10px] text-gray-600 font-mono hidden sm:block">
-            Mapa estratégico
-          </span>
+          <h1 className="text-sm sm:text-base font-display font-bold text-white truncate">{mapTitle}</h1>
+          {mapSubtitle != null && mapSubtitle !== '' && (
+            <span className="text-[10px] text-gray-600 font-mono hidden sm:block">{mapSubtitle}</span>
+          )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 md:gap-3">
+          <button
+            type="button"
+            onClick={() => setShowCountrySilhouette(!showCountrySilhouette)}
+            title="Silueta de Venezuela (contorno país)"
+            className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+              ${showCountrySilhouette
+                ? 'bg-sky-500/15 border-sky-400/45 text-sky-200'
+                : 'bg-shadow-800 border-white/10 text-gray-500 hover:text-gray-300'
+              }`}
+          >
+            <Globe2 className="w-3 h-3 flex-shrink-0" />
+            <span className="hidden sm:inline">Venezuela</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowStatesLayer(!showStatesLayer)}
+            title="Límites de estados (sin colores REDI)"
+            className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+              ${showStatesLayer
+                ? 'bg-emerald-500/15 border-emerald-400/45 text-emerald-200'
+                : 'bg-shadow-800 border-white/10 text-gray-500 hover:text-gray-300'
+              }`}
+          >
+            <MapIcon className="w-3 h-3 flex-shrink-0" />
+            <span className="hidden sm:inline">Estados</span>
+          </button>
           <button
             type="button"
             onClick={() => setShowMunicipalities(!showMunicipalities)}
@@ -936,30 +1323,47 @@ export function VenezuelaMap({
           </button>
           <button
             type="button"
-            onClick={locateMe}
-            disabled={myLocGeoPending}
-            className="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
-              bg-shadow-800 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 hover:border-cyan-400/55
-              disabled:opacity-45 disabled:cursor-not-allowed"
-            title="Geolocalizar y mostrar tu posición en el mapa"
+            onClick={() => setShowRediLayer(!showRediLayer)}
+            title="Capa REDI — colores por región estratégica"
+            className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+              ${showRediLayer
+                ? 'bg-neon-blue/20 border-neon-blue/45 text-neon-blue'
+                : 'bg-shadow-800 border-white/10 text-gray-500 hover:text-gray-300'
+              }`}
           >
-            {myLocGeoPending ? (
-              <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
-            ) : (
-              <Navigation className="w-3 h-3 flex-shrink-0" />
-            )}
-            <span className="hidden sm:inline">Mi ubicación</span>
+            <Waypoints className="w-3 h-3 flex-shrink-0" />
+            <span className="hidden sm:inline">REDI</span>
           </button>
-          {myLocation && !myLocationCardVisible && (
-            <button
-              type="button"
-              onClick={() => setMyLocationCardVisible(true)}
-              title="Mostrar tarjeta de ubicación"
-              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono border border-white/15 text-gray-400 hover:text-cyan-200 hover:border-cyan-500/30"
-            >
-              <Clipboard className="w-3 h-3 sm:hidden flex-shrink-0" aria-hidden />
-              <span className="hidden sm:inline">Ver tarjeta</span>
-            </button>
+          {showGeolocation && (
+            <>
+              <button
+                type="button"
+                onClick={locateMe}
+                disabled={myLocGeoPending}
+                className="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-all
+                  bg-shadow-800 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 hover:border-cyan-400/55
+                  disabled:opacity-45 disabled:cursor-not-allowed"
+                title="Geolocalizar y mostrar tu posición en el mapa"
+              >
+                {myLocGeoPending ? (
+                  <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+                ) : (
+                  <Navigation className="w-3 h-3 flex-shrink-0" />
+                )}
+                <span className="hidden sm:inline">Mi ubicación</span>
+              </button>
+              {myLocation && !myLocationCardVisible && (
+                <button
+                  type="button"
+                  onClick={() => setMyLocationCardVisible(true)}
+                  title="Mostrar tarjeta de ubicación"
+                  className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono border border-white/15 text-gray-400 hover:text-cyan-200 hover:border-cyan-500/30"
+                >
+                  <Clipboard className="w-3 h-3 sm:hidden flex-shrink-0" aria-hidden />
+                  <span className="hidden sm:inline">Ver tarjeta</span>
+                </button>
+              )}
+            </>
           )}
           {markers.length > 0 && (
             <button
@@ -977,18 +1381,13 @@ export function VenezuelaMap({
               <span className="sm:hidden tabular-nums">{markers.length}</span>
             </button>
           )}
-          {summary && (
+          {showSummaryToolbar && (
             <div className="hidden lg:flex items-center gap-3">
-              {[
-                { label: 'Orgs', value: summary.total_orgs, icon: Building2, color: 'text-neon-blue' },
-                { label: 'Activas', value: summary.active_orgs, icon: Shield, color: 'text-neon-green' },
-                { label: 'Criminales', value: summary.criminal_orgs, icon: Skull, color: 'text-neon-red' },
-                { label: 'Extranjeras', value: summary.foreign_orgs, icon: Globe, color: 'text-neon-yellow' },
-              ].map(s => (
-                <div key={s.label} className="flex items-center gap-1">
-                  <s.icon className={`w-3 h-3 ${s.color}`} />
-                  <span className="text-[11px] font-mono text-gray-400">{s.value}</span>
-                  <span className="text-[9px] text-gray-600">{s.label}</span>
+              {summaryToolbarItems.map(m => (
+                <div key={m.id} className="flex items-center gap-1">
+                  <Hash className="w-3 h-3 text-gray-500" />
+                  <span className="text-[11px] font-mono text-gray-400">{m.value}</span>
+                  <span className="text-[9px] text-gray-600">{m.label}</span>
                 </div>
               ))}
             </div>
@@ -1001,6 +1400,7 @@ export function VenezuelaMap({
         {/* Mapa */}
         <div className="relative territory-map min-h-0 min-w-0 w-full flex-1">
           {/* Búsqueda territorial flotante (comparte estado con barra lateral) */}
+          {showMapSearch && (
           <div
             ref={mapSearchRef}
             className="absolute top-2 sm:top-3 left-1/2 z-[1100] w-[min(calc(100%-2.5rem),26rem)] sm:w-[min(calc(100%-1rem),26rem)] -translate-x-1/2 pointer-events-none"
@@ -1112,6 +1512,7 @@ export function VenezuelaMap({
               </div>
             </div>
           </div>
+          )}
           <style>{`
             .territory-map .leaflet-container {
               background: #0a0e14;
@@ -1295,33 +1696,80 @@ export function VenezuelaMap({
               <MapController fly={flyTarget} />
               <MapZoomSync onZoom={setMapZoom} />
               <MapInvalidateWhenSidebarChanges sidebarOpen={sidebarOpen} />
+              <MapLayerPanes zByPane={paneZIndices} />
 
-              {statesGeo && (
+              {showCountrySilhouette && countryOutlineGeo && (
                 <GeoJSON
-                  key={`states-${geoKey}-${myLocVisualIsolate ? 'iso' : 'all'}`}
-                  data={statesGeo}
-                  style={stateStyle}
-                  onEachFeature={onEachState}
+                  key={`country-${geoKey}`}
+                  data={countryOutlineGeo}
+                  pane="venCountry"
+                  interactive={false}
+                  style={() => ({
+                    fillColor: '#0f172a',
+                    fillOpacity: 0.38,
+                    color: 'rgba(186, 198, 214, 0.92)',
+                    weight: 2.1,
+                    opacity: 1,
+                  })}
                 />
               )}
 
-              <GeoJSON
-                key={`esequibo-${myLocVisualIsolate ? 'd' : 'n'}`}
-                data={ESEQUIBO_GEOJSON}
-                style={() => ({
-                  fillColor: REDI_GUAYANA_COLOR,
-                  fillOpacity: myLocVisualIsolate ? 0.07 : 0.22,
-                  color: REDI_GUAYANA_COLOR,
-                  weight: 1.5,
-                  opacity: myLocVisualIsolate ? 0.35 : 0.85,
-                })}
-                onEachFeature={onEachEsequibo}
-              />
+              {statesGeo && showStatesLayer && !showRediLayer && (
+                <GeoJSON
+                  key={`states-neutral-${geoKey}-${myLocVisualIsolate ? 'iso' : 'all'}`}
+                  data={statesGeo}
+                  pane="venStates"
+                  style={neutralStateStyle}
+                  onEachFeature={onEachStateNeutral}
+                />
+              )}
+
+              {(showStatesLayer || showRediLayer || showMunicipalities || showParishes) && (
+                <GeoJSON
+                  key={`esequibo-${showRediLayer ? 'r' : showParishes ? 'p' : showMunicipalities ? 'm' : 'n'}-${myLocVisualIsolate ? 'd' : 'n'}`}
+                  data={ESEQUIBO_GEOJSON}
+                  pane="venEsequibo"
+                  style={() => {
+                    if (showRediLayer) {
+                      return {
+                        fillColor: REDI_GUAYANA_COLOR,
+                        fillOpacity: myLocVisualIsolate ? 0.07 : 0.22,
+                        color: REDI_GUAYANA_COLOR,
+                        weight: 1.5,
+                        opacity: myLocVisualIsolate ? 0.35 : 0.85,
+                      }
+                    }
+                    if (showParishes) {
+                      return getEsequiboParishSilhouetteStyle()
+                    }
+                    if (showMunicipalities) {
+                      return getEsequiboMunicipalitySilhouetteStyle()
+                    }
+                    return {
+                      fillColor: '#64748b',
+                      fillOpacity: myLocVisualIsolate ? 0.06 : 0.14,
+                      color: 'rgba(226, 232, 240, 0.45)',
+                      weight: 1.2,
+                      opacity: 0.85,
+                    }
+                  }}
+                  onEachFeature={
+                    showRediLayer
+                      ? onEachEsequiboRedi
+                      : showParishes
+                        ? onEachEsequiboAsParish
+                        : showMunicipalities
+                          ? onEachEsequiboAsMunicipality
+                          : onEachEsequiboNeutral
+                  }
+                />
+              )}
 
               {showMunicipalities && muniGeo && (
                 <GeoJSON
                   key={`municipalities-${mapZoom >= 10}-${myLocMuniGid ?? 'x'}-${myLocVisualIsolate ? 'f' : 'a'}`}
                   data={muniGeo}
+                  pane="venMuni"
                   style={getMunicipalityStyle}
                   onEachFeature={onEachMunicipality}
                 />
@@ -1331,8 +1779,19 @@ export function VenezuelaMap({
                 <GeoJSON
                   key={`parishes-${mapZoom >= 11}-${myLocParishPcode ?? 'x'}-${myLocVisualIsolate ? 'f' : 'a'}`}
                   data={parishGeo}
+                  pane="venParish"
                   style={getParishStyle}
                   onEachFeature={onEachParish}
+                />
+              )}
+
+              {statesGeo && showRediLayer && (
+                <GeoJSON
+                  key={`states-redi-${geoKey}-${myLocVisualIsolate ? 'iso' : 'all'}`}
+                  data={statesGeo}
+                  pane="venRedi"
+                  style={stateStyle}
+                  onEachFeature={onEachStateRedi}
                 />
               )}
 
@@ -1394,20 +1853,28 @@ export function VenezuelaMap({
                 )
               })}
 
-              {myLocation && userLocationIcon && (
+              {showGeolocation && myLocation && userLocationIcon && (
                 <Marker position={[myLocation.lat, myLocation.lng]} icon={userLocationIcon} />
               )}
             </MapContainer>
           </div>
+          <MapLayerManager
+            open={layersPanelOpen}
+            onOpenChange={setLayersPanelOpen}
+            layerOrder={safeLayerOrder}
+            onLayerOrderChange={next => setLayerOrder(normalizeLayerOrder(next))}
+            visibility={layerVisibility}
+            onVisibilityChange={onLayerVisibilityChange}
+          />
 
-          {myLocError && (
+          {showGeolocation && myLocError && (
             <div className="absolute top-16 sm:top-14 left-3 right-3 sm:left-14 sm:right-auto z-[1001] max-w-[min(20rem,calc(100%-1.5rem))] sm:max-w-[min(20rem,calc(100%-5rem))] rounded-lg border border-neon-red/40 bg-shadow-900/95 px-3 py-2 text-[10px] font-mono text-red-200 shadow-lg backdrop-blur-sm">
               {myLocError}
             </div>
           )}
 
           <AnimatePresence>
-            {myLocation && myLocationCardVisible && (
+            {showGeolocation && myLocation && myLocationCardVisible && (
               <motion.div
                 initial={{ opacity: 0, x: 16 }}
                 animate={{ opacity: 1, x: 0 }}
@@ -1671,7 +2138,11 @@ export function VenezuelaMap({
                     className="rounded-lg"
                   >
                     <div className="max-h-[min(38vh,18rem)] overflow-y-auto overscroll-contain rounded-lg border border-white/10 bg-shadow-900/90 px-2.5 py-2 shadow-lg backdrop-blur-sm">
-                      <RediLegendInner showMunicipalities={showMunicipalities} showParishes={showParishes} />
+                      <RediLegendInner
+                        showRediLayer={showRediLayer}
+                        showMunicipalities={showMunicipalities}
+                        showParishes={showParishes}
+                      />
                     </div>
                   </motion.div>
                 )}
@@ -1680,7 +2151,11 @@ export function VenezuelaMap({
 
             <div className="hidden max-h-[min(42vh,20rem)] overflow-y-auto overscroll-contain lg:block">
               <div className="rounded-lg border border-white/10 bg-shadow-900/90 px-2.5 py-2 sm:px-3 shadow-lg backdrop-blur-sm">
-                <RediLegendInner showMunicipalities={showMunicipalities} showParishes={showParishes} />
+                <RediLegendInner
+                  showRediLayer={showRediLayer}
+                  showMunicipalities={showMunicipalities}
+                  showParishes={showParishes}
+                />
               </div>
             </div>
           </div>
@@ -1735,30 +2210,20 @@ export function VenezuelaMap({
                     </div>
                   </div>
 
-                  <div className="p-2.5 grid grid-cols-3 gap-1 text-center">
-                    <div>
-                      <div className="text-base font-bold font-mono text-neon-red">
-                        {selectedState.org_count}
-                      </div>
-                      <div className="text-[8px] text-gray-500">ORGS</div>
+                  {(selectedState.metrics?.length ?? 0) > 0 && (
+                    <div className="p-2.5 flex flex-wrap gap-3 justify-center border-b border-white/[0.04]">
+                      {selectedState.metrics!.map(m => (
+                        <div key={m.id} className="min-w-[3.5rem] text-center">
+                          <div className="text-base font-bold font-mono text-gray-100 tabular-nums">
+                            {m.value}
+                          </div>
+                          <div className="text-[8px] text-gray-500 leading-tight max-w-[6rem] mx-auto">
+                            {m.label}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    <div>
-                      <div className="text-base font-bold font-mono text-neon-blue">
-                        {selectedState.person_count}
-                      </div>
-                      <div className="text-[8px] text-gray-500">PERSONAS</div>
-                    </div>
-                    <div>
-                      <div className="text-base font-bold font-mono text-red-400">
-                        {selectedState.criminal_count}
-                      </div>
-                      <div className="text-[8px] text-gray-500">CRIMINAL</div>
-                    </div>
-                  </div>
-                  <div className="px-2.5 pb-1.5 flex gap-2 text-[8px] font-mono">
-                    <span className="text-orange-400">Param: {selectedState.paramilitar_count}</span>
-                    <span className="text-yellow-400">Narco: {selectedState.narco_count}</span>
-                  </div>
+                  )}
                   {selectedState.population && (
                     <div className="px-2.5 pb-1.5 text-[8px] text-gray-600">
                       Pob: {selectedState.population.toLocaleString()}
@@ -1781,7 +2246,7 @@ export function VenezuelaMap({
             })()}
           </AnimatePresence>
 
-          {!sidebarOpen && (
+          {showTerritoryPanel && !sidebarOpen && (
             <button
               type="button"
               onClick={() => setSidebarOpen(true)}
@@ -1802,7 +2267,7 @@ export function VenezuelaMap({
           )}
         </div>
 
-        {sidebarOpen && (
+        {showTerritoryPanel && sidebarOpen && (
           <button
             type="button"
             aria-label="Cerrar lista de territorios"
@@ -1812,7 +2277,7 @@ export function VenezuelaMap({
         )}
 
         {/* Sidebar: drawer en móvil, columna en desktop */}
-        {sidebarOpen && (
+        {showTerritoryPanel && sidebarOpen && (
           <div
             className="fixed inset-y-0 right-0 z-[1999] w-[min(20rem,calc(100vw-0.5rem))] flex flex-col bg-shadow-800/98 border-l border-white/10 flex-shrink-0 min-h-0 shadow-2xl
               lg:relative lg:inset-auto lg:z-auto lg:w-80 lg:max-w-[20rem] lg:shadow-none lg:bg-shadow-800/80 lg:border-white/5"
@@ -1862,18 +2327,23 @@ export function VenezuelaMap({
                 </div>
               )}
             </div>
-            <div className="px-2 py-1.5 border-b border-white/5 flex-shrink-0 flex items-center justify-between gap-2">
-              <span className="text-[10px] text-gray-500 font-mono">Ordenar lista</span>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as 'org_count' | 'person_count' | 'name')}
-                className="text-[9px] bg-shadow-900 border border-white/10 rounded px-1 py-0.5 text-gray-400 max-w-[7rem]"
-              >
-                <option value="org_count">Por orgs</option>
-                <option value="person_count">Por personas</option>
-                <option value="name">A-Z</option>
-              </select>
-            </div>
+            {metricSortOptions.length > 0 && (
+              <div className="px-2 py-1.5 border-b border-white/5 flex-shrink-0 flex items-center justify-between gap-2">
+                <span className="text-[10px] text-gray-500 font-mono">Ordenar lista</span>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className="text-[9px] bg-shadow-900 border border-white/10 rounded px-1 py-0.5 text-gray-400 max-w-[9rem]"
+                >
+                  <option value="name">A-Z</option>
+                  {metricSortOptions.map(([id, label]) => (
+                    <option key={id} value={`metric:${id}`}>
+                      Por: {label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
               {territorySearchQueryNorm(territorialSearchQuery).length >= 2 ? (
@@ -1967,13 +2437,13 @@ export function VenezuelaMap({
                                     {state.name}
                                   </span>
                                 </div>
-                                <div className="flex items-center gap-1.5 mt-0.5">
-                                  <span className={`text-[9px] font-mono flex items-center gap-0.5 ${state.org_count > 0 ? 'text-neon-red' : 'text-gray-600'}`}>
-                                    <Building2 className="w-2.5 h-2.5" /> {state.org_count}
-                                  </span>
-                                  <span className={`text-[9px] font-mono flex items-center gap-0.5 ${state.person_count > 0 ? 'text-neon-blue' : 'text-gray-600'}`}>
-                                    <Users className="w-2.5 h-2.5" /> {state.person_count}
-                                  </span>
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+                                  {(state.metrics ?? []).slice(0, 3).map(m => (
+                                    <span key={m.id} className="text-[9px] font-mono text-gray-500">
+                                      <span className="text-gray-400">{m.label}:</span>{' '}
+                                      <span className="text-gray-300 tabular-nums">{m.value}</span>
+                                    </span>
+                                  ))}
                                   {munis.length > 0 && (
                                     <span className="text-[8px] font-mono text-gray-600 ml-auto">{munis.length} mun.</span>
                                   )}

@@ -1,0 +1,13 @@
+# Prueba local: docker compose up --build
+# En Dokploy suele bastar el Dockerfile + Git; esto es opcional.
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_BASE: ${VITE_BASE:-/}
+    ports:
+      - "8080:80"
+    restart: unless-stopped
